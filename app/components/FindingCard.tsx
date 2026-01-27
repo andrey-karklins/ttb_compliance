@@ -48,7 +48,10 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
                   <h4 className="font-semibold text-gray-900">
                     {finding.title}
                   </h4>
-                  <Badge className={`border-transparent ${colors.bg} ${colors.text}`}>
+                  <Badge
+                    variant="outline"
+                    className={`border-transparent ${colors.bg} ${colors.text}`}
+                  >
                     {finding.severity}
                   </Badge>
                 </div>
@@ -116,7 +119,7 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
                 <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
                   Requirement
                 </h5>
-                <p className="text-sm text-blue-700 bg-blue-50 p-3 rounded-lg border border-blue-200">
+                <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg border border-gray-200">
                   {finding.requirement}
                 </p>
               </div>
@@ -125,7 +128,7 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
                 <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
                   Fix
                 </h5>
-                <p className="text-sm text-blue-800 bg-blue-100/60 p-3 rounded-lg border border-blue-200">
+                <p className="text-sm text-gray-800 bg-gray-100/60 p-3 rounded-lg border border-gray-200">
                   {finding.fix}
                 </p>
               </div>

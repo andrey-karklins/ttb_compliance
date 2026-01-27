@@ -2,12 +2,19 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { motion } from "framer-motion";
-import { v4 as uuidv4 } from "uuid";
-import type { ComplianceReport, ChatMessage, ChatImage } from "@/lib/schema";
+import type { ComplianceReport, ChatImage } from "@/lib/schema";
 import { QUICK_PROMPTS } from "@/lib/schema";
+import {
+  clearChatMemory,
+  getChatSnapshot,
+  startChatStream,
+  subscribeToChat,
+  type ChatSnapshot,
+} from "../../lib/chatStore";
 import ChatMarkdown from "./ChatMarkdown";
 
 interface ChatPanelProps {
+  chatId: string;
   sessionId: string;
   vectorStoreId: string;
   report: ComplianceReport | null;
@@ -15,14 +22,11 @@ interface ChatPanelProps {
   onJumpToFinding?: (findingId: string) => void;
   focusFindingId?: string;
   onClearFocus?: () => void;
-}
-
-// Storage key generator
-function getChatStorageKey(sessionId: string, runId: string): string {
-  return `ttb_chat:${sessionId}:${runId}`;
+  onChatActivity?: (chatId: string, content: string) => void;
 }
 
 export function ChatPanel({
+  chatId,
   sessionId,
   vectorStoreId,
   report,
@@ -30,19 +34,15 @@ export function ChatPanel({
   onJumpToFinding,
   focusFindingId,
   onClearFocus,
+  onChatActivity,
 }: ChatPanelProps) {
-  const runId = report?.run_id ?? "general";
   const hasReport = Boolean(report);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [messagesRunId, setMessagesRunId] = useState(runId);
+  const [chatState, setChatState] = useState<ChatSnapshot>(() => getChatSnapshot(chatId));
+  const { messages, isStreaming, hasStartedResponse, error } = chatState;
   const [inputValue, setInputValue] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
-  const lastRunIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const showThinking = isLoading && !streamingAssistantId;
+  const showThinking = isStreaming && !hasStartedResponse;
   const quickPrompts = hasReport
     ? QUICK_PROMPTS
     : [
@@ -52,47 +52,12 @@ export function ChatPanel({
         "What claims are commonly prohibited on labels?",
       ];
 
-  // Load chat history from localStorage (prompt before clearing on new report)
+  // Subscribe to chat state changes
   useEffect(() => {
-    if (lastRunIdRef.current === runId) return;
-    lastRunIdRef.current = runId;
-
-    if (messages.length > 0) {
-      const shouldClear = window.confirm(
-        "Starting a new compliance report will clear this chat history. Continue?"
-      );
-      if (!shouldClear) {
-        return;
-      }
-    }
-
-    const storageKey = getChatStorageKey(sessionId, runId);
-    const stored = localStorage.getItem(storageKey);
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as ChatMessage[];
-        setMessages(parsed);
-      } catch {
-        setMessages([]);
-      }
-    } else {
-      setMessages([]);
-    }
-    setMessagesRunId(runId);
-    setStreamingAssistantId(null);
-    setError(null);
-  }, [sessionId, runId, messages.length]);
-
-  // Save chat history to localStorage
-  useEffect(() => {
-    if (messagesRunId !== runId) return;
-    const storageKey = getChatStorageKey(sessionId, runId);
-    if (messages.length > 0) {
-      localStorage.setItem(storageKey, JSON.stringify(messages));
-    } else {
-      localStorage.removeItem(storageKey);
-    }
-  }, [messages, sessionId, runId, messagesRunId]);
+    setChatState(getChatSnapshot(chatId));
+    setInputValue("");
+    return subscribeToChat(chatId, setChatState);
+  }, [chatId]);
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -113,111 +78,27 @@ export function ChatPanel({
   // Send message
   const sendMessage = useCallback(
     async (content: string, findingId?: string) => {
-      if (!content.trim() || isLoading) return;
+      if (!content.trim() || isStreaming) return;
 
-      setError(null);
-      setStreamingAssistantId(null);
-      const userMessage: ChatMessage = {
-        id: uuidv4(),
-        role: "user",
-        content: content.trim(),
-        createdAt: new Date().toISOString(),
-        focusFindingId: findingId,
-      };
-
-      const nextMessages = [...messages, userMessage];
-      setMessages(nextMessages);
       setInputValue("");
-      setIsLoading(true);
+      onChatActivity?.(chatId, content.trim());
 
       // Clear focus after sending
       if (findingId && onClearFocus) {
         onClearFocus();
       }
 
-      try {
-        const response = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sessionId,
-            vectorStoreId,
-            report,
-            messages: nextMessages,
-            focusFindingId: findingId,
-            images, // Include label images for visual context
-          }),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text().catch(() => "");
-          throw new Error(errorText || "Failed to get response");
-        }
-
-        if (!response.body) {
-          const text = await response.text();
-          const assistantMessage: ChatMessage = {
-            id: uuidv4(),
-            role: "assistant",
-            content: text,
-            createdAt: new Date().toISOString(),
-            focusFindingId: findingId,
-          };
-          setMessages((prev) => [...prev, assistantMessage]);
-          return;
-        }
-
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let assistantCreated = false;
-        const assistantId = uuidv4();
-        let assistantContent = "";
-
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          const chunk = decoder.decode(value, { stream: true });
-          if (!chunk) continue;
-
-          if (!assistantCreated) {
-            assistantCreated = true;
-            setStreamingAssistantId(assistantId);
-            const assistantMessage: ChatMessage = {
-              id: assistantId,
-              role: "assistant",
-              content: "",
-              createdAt: new Date().toISOString(),
-              focusFindingId: findingId,
-            };
-            setMessages((prev) => [...prev, assistantMessage]);
-          }
-
-          assistantContent += chunk;
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, content: assistantContent } : msg
-            )
-          );
-        }
-
-        assistantContent += decoder.decode();
-        if (assistantCreated) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === assistantId ? { ...msg, content: assistantContent } : msg
-            )
-          );
-        } else {
-          throw new Error("No response received");
-        }
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to send message");
-      } finally {
-        setIsLoading(false);
-        setStreamingAssistantId(null);
-      }
+      await startChatStream({
+        chatId,
+        sessionId,
+        vectorStoreId,
+        report,
+        content,
+        focusFindingId: findingId,
+        images,
+      });
     },
-    [isLoading, sessionId, vectorStoreId, report, messages, onClearFocus, images]
+    [isStreaming, sessionId, vectorStoreId, report, onClearFocus, images, chatId, onChatActivity]
   );
 
   // Handle form submit
@@ -234,8 +115,8 @@ export function ChatPanel({
   // Render assistant content with markdown and clickable finding IDs
   const renderAssistantContent = (content: string) => {
     return (
-      <ChatMarkdown 
-        content={content} 
+      <ChatMarkdown
+        content={content}
         onFindingClick={onJumpToFinding}
         findings={report?.findings ?? []}
       />
@@ -244,12 +125,9 @@ export function ChatPanel({
 
   // Clear chat history
   const clearChat = () => {
-    const shouldClear = window.confirm("Start a new chat? This will clear the current conversation.");
+    const shouldClear = window.confirm("Clear this chat? This will remove the current conversation.");
     if (!shouldClear) return;
-    setMessages([]);
-    setStreamingAssistantId(null);
-    const storageKey = getChatStorageKey(sessionId, runId);
-    localStorage.removeItem(storageKey);
+    clearChatMemory(chatId);
   };
 
   return (
@@ -269,7 +147,7 @@ export function ChatPanel({
             onClick={clearChat}
             className="text-xs px-3 py-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 transition-colors"
           >
-            New Chat
+            Clear chat
           </button>
         )}
       </div>
@@ -441,18 +319,18 @@ export function ChatPanel({
             placeholder={hasReport ? "Ask about your compliance findings..." : "Ask about TTB labeling rules..."}
             rows={3}
             className="flex-1 px-4 py-3 text-sm border border-gray-300 rounded-xl bg-white text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-violet-500 focus:border-violet-500 resize-none shadow-sm"
-            disabled={isLoading}
+            disabled={isStreaming}
           />
           <button
             type="submit"
-            disabled={!inputValue.trim() || isLoading}
+            disabled={!inputValue.trim() || isStreaming}
             className={`self-end px-4 py-3 rounded-xl font-medium transition-all shadow-sm ${
-              !inputValue.trim() || isLoading
+              !inputValue.trim() || isStreaming
                 ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                 : "bg-violet-600 text-white hover:bg-violet-700 hover:shadow-md active:scale-95"
             }`}
           >
-            {isLoading ? (
+            {isStreaming ? (
               <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
                 <circle
                   className="opacity-25"

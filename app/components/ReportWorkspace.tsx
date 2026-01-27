@@ -145,6 +145,7 @@ export function ReportWorkspace({
         >
           <div className="lg:sticky lg:top-24 bg-white rounded-xl shadow-sm border border-gray-200 h-[calc(100vh-8rem)] lg:h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
             <ChatPanel
+              chatId={report?.run_id ?? "general"}
               sessionId={sessionId}
               vectorStoreId={vectorStoreId}
               report={report}

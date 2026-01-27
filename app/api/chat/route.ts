@@ -58,14 +58,38 @@ export async function POST(request: NextRequest) {
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
+        let aborted = false;
+        const onAbort = () => {
+          aborted = true;
+        };
+        request.signal?.addEventListener("abort", onAbort);
+
         try {
           for await (const chunk of textStream) {
-            controller.enqueue(encoder.encode(chunk));
+            if (aborted) break;
+            try {
+              controller.enqueue(encoder.encode(chunk));
+            } catch {
+              aborted = true;
+              break;
+            }
           }
-          controller.close();
+          if (!aborted) {
+            controller.close();
+          } else {
+            try {
+              controller.close();
+            } catch {
+              // Ignore close errors after abort
+            }
+          }
         } catch (streamError) {
-          console.error("Chat stream error:", streamError);
-          controller.error(streamError);
+          if (!aborted) {
+            console.error("Chat stream error:", streamError);
+            controller.error(streamError);
+          }
+        } finally {
+          request.signal?.removeEventListener("abort", onAbort);
         }
       },
     });

@@ -161,7 +161,7 @@ export function ResultsPanel({ report, isLoading, error, onAskAboutFinding }: Re
               className={`p-3 rounded-xl border-2 transition-all shadow-sm cursor-pointer ${
                 severityFilter === severity
                   ? `${colors.border} ${colors.bg}`
-                  : "border-transparent bg-gray-50 hover:border-gray-300"
+                  : "border-transparent bg-gray-50"
               }`}
             >
               <div className={`text-2xl font-bold ${colors.text}`}>{count}</div>
