@@ -20,12 +20,12 @@ function buildUserPrompt(context: AnalyzeRequest["context"]): string {
   if (context.producer) contextParts.push(`Producer: ${context.producer}`);
   if (context.additionalNotes) contextParts.push(`Notes: ${context.additionalNotes}`);
 
-  return `Analyze the attached label image(s) for TTB compliance.
+  return `Analyze the attached label image(s) for TTB compliance (DISTILLED SPIRITS labeling focus).
 
 Product info: ${contextParts.length > 0 ? contextParts.join(", ") : "See label"}
 
-Look at the label image and check against TTB regulations. Return up to 10 findings.
-For each finding, cite the specific CFR section (e.g., "27 CFR 4.32(a)").
+Look at the label image and check against TTB distilled spirits labeling requirements. Return up to 10 findings.
+For each finding, cite the specific CFR section when applicable (e.g., "27 CFR 5.xx") and name the source file you relied on.
 No duplicates - one finding per unique issue.`;
 }
 

@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { DISTILLED_SPIRITS_ANALYZE_INSTRUCTIONS } from "./prompts";
 
 // ============================================================================
 // Model Configuration
@@ -34,24 +35,7 @@ export function getOpenAIClient(): OpenAI {
 }
 
 // System instructions for TTB compliance analysis
-export const COMPLIANCE_INSTRUCTIONS = `You are a TTB compliance analyst. Analyze the label against TTB regulations.
-
-## Rules
-1. **Cite specific regulations** - Use CFR section numbers (e.g., "27 CFR 4.32(a)")
-2. **No duplicates** - One finding per issue, even if multiple regulations apply
-3. **Be concise** - Short titles, brief summaries
-4. **Max 10 findings** - Focus on most significant issues only
-5. **Severity levels**:
-   - BLOCKER: Will cause rejection
-   - MAJOR: Likely rejection
-   - MINOR: Recommended fix
-   - INFO: Suggestion only
-
-## Key Areas (27 CFR Part 4 for wine, Part 5 for spirits, Part 7 for malt beverages)
-- Mandatory statements: Government Warning, net contents, ABV, responsible party
-- Class/type designation
-- Prohibited claims
-- Font size requirements`;
+export const COMPLIANCE_INSTRUCTIONS = DISTILLED_SPIRITS_ANALYZE_INSTRUCTIONS;
 
 // Chat-specific instructions for follow-up discussions
 export const CHAT_INSTRUCTIONS = `You are a TTB compliance assistant helping users understand and fix issues found in their alcohol beverage label analysis.
