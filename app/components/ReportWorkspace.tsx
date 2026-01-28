@@ -150,6 +150,7 @@ export function ReportWorkspace({
               vectorStoreId={vectorStoreId}
               report={report}
               images={images}
+              isReportLoading={isLoading}
               onJumpToFinding={handleJumpToFinding}
               focusFindingId={focusFindingId}
               onClearFocus={handleClearFocus}
