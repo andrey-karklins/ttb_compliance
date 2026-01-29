@@ -7,15 +7,16 @@ import { QUICK_PROMPTS } from "@/lib/schema";
 import {
   clearChatMemory,
   getChatSnapshot,
+  resumeChatStream,
   startChatStream,
   subscribeToChat,
+  syncChatHistory,
   type ChatSnapshot,
 } from "../../lib/chatStore";
 import ChatMarkdown from "./ChatMarkdown";
 
 interface ChatPanelProps {
   chatId: string;
-  sessionId: string;
   vectorStoreId: string;
   report: ComplianceReport | null;
   images?: ChatImage[]; // Label images for context
@@ -24,11 +25,12 @@ interface ChatPanelProps {
   focusFindingId?: string;
   onClearFocus?: () => void;
   onChatActivity?: (chatId: string, content: string) => void;
+  title?: string;
+  subtitle?: string;
 }
 
 export function ChatPanel({
   chatId,
-  sessionId,
   vectorStoreId,
   report,
   images,
@@ -37,6 +39,8 @@ export function ChatPanel({
   focusFindingId,
   onClearFocus,
   onChatActivity,
+  title,
+  subtitle,
 }: ChatPanelProps) {
   const hasReport = Boolean(report);
   const [chatState, setChatState] = useState<ChatSnapshot>(() => getChatSnapshot(chatId));
@@ -72,6 +76,13 @@ export function ChatPanel({
     return subscribeToChat(chatId, setChatState);
   }, [chatId]);
 
+  useEffect(() => {
+    void (async () => {
+      await syncChatHistory(chatId);
+      await resumeChatStream(chatId);
+    })();
+  }, [chatId]);
+
   // Scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -103,7 +114,6 @@ export function ChatPanel({
 
       await startChatStream({
         chatId,
-        sessionId,
         vectorStoreId,
         report,
         content,
@@ -111,7 +121,7 @@ export function ChatPanel({
         images,
       });
     },
-    [isStreaming, isChatLocked, sessionId, vectorStoreId, report, onClearFocus, images, chatId, onChatActivity]
+    [isStreaming, isChatLocked, vectorStoreId, report, onClearFocus, images, chatId, onChatActivity]
   );
 
   // Handle form submit
@@ -150,10 +160,10 @@ export function ChatPanel({
       <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 bg-linear-to-r from-white via-violet-50/60 to-white">
         <div>
           <h3 className="font-semibold text-gray-900 text-base">
-            AI Compliance Assistant
+            {title ?? "AI Compliance Assistant"}
           </h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            Ask questions about regulations or your compliance report
+            {subtitle ?? "Ask questions about regulations or your compliance report"}
           </p>
         </div>
         <div className="flex items-center gap-2">

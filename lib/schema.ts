@@ -187,7 +187,7 @@ export interface AnalysisImage {
  * Analysis request payload
  */
 export interface AnalyzeRequest {
-  sessionId: string;
+  threadId: string;
   vectorStoreId: string;
   context: ContextFormData;
   images: AnalysisImage[];
@@ -230,10 +230,10 @@ export type ChatImage = z.infer<typeof ChatImageSchema>;
  * Chat request payload
  */
 export const ChatRequestSchema = z.object({
-  sessionId: z.string(),
+  chatId: z.string(),
   vectorStoreId: z.string(),
   report: ComplianceReportSchema.nullable(),
-  messages: z.array(ChatMessageSchema),
+  content: z.string(),
   focusFindingId: z.string().optional(),
   images: z.array(ChatImageSchema).optional(), // Label images for context
 });

@@ -9,7 +9,6 @@ interface ReportWorkspaceProps {
   report: ComplianceReport | null;
   isLoading: boolean;
   error: string | null;
-  sessionId: string;
   vectorStoreId: string;
   images?: ChatImage[]; // Label images for chat context
 }
@@ -20,7 +19,6 @@ export function ReportWorkspace({
   report,
   isLoading,
   error,
-  sessionId,
   vectorStoreId,
   images,
 }: ReportWorkspaceProps) {
@@ -146,7 +144,6 @@ export function ReportWorkspace({
           <div className="lg:sticky lg:top-24 bg-white rounded-xl shadow-sm border border-gray-200 h-[calc(100vh-8rem)] lg:h-[calc(100vh-8rem)] flex flex-col overflow-hidden">
             <ChatPanel
               chatId={report?.run_id ?? "general"}
-              sessionId={sessionId}
               vectorStoreId={vectorStoreId}
               report={report}
               images={images}

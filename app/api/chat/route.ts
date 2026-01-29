@@ -1,13 +1,140 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOpenAIClient, runComplianceChatStream } from "@/lib/openai";
-import { getRegulationsVectorStoreId } from "@/lib/regulations";
+import { randomUUID } from "crypto";
 import { ChatRequestSchema } from "@/lib/schema";
+import { clearChat, getChatHistory, getStream, startChatStream } from "@/lib/chatServerStore";
+
+const COOKIE_NAME = "ttb_uid";
+
+type ActiveStream = NonNullable<ReturnType<typeof getStream>>;
+
+function buildCookieHeader(userId: string) {
+  const parts = [
+    `${COOKIE_NAME}=${userId}`,
+    "Path=/",
+    "SameSite=Lax",
+    `Max-Age=${60 * 60 * 24 * 30}`,
+  ];
+  if (process.env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function getOrCreateUserId(request: NextRequest) {
+  const existing = request.cookies.get(COOKIE_NAME)?.value;
+  if (existing) {
+    return { userId: existing, setCookieHeader: null as string | null };
+  }
+  const userId = randomUUID();
+  return { userId, setCookieHeader: buildCookieHeader(userId) };
+}
+
+function encodeSse(event: string, data: unknown) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function createStreamResponse(
+  streamState: ActiveStream,
+  cursor: number,
+  setCookieHeader: string | null
+) {
+  const stream = new ReadableStream({
+    async start(controller) {
+      const encoder = new TextEncoder();
+      let currentCursor = Math.max(0, Math.min(cursor, streamState.content.length));
+
+      const send = (event: string, data: unknown) => {
+        try {
+          controller.enqueue(encoder.encode(encodeSse(event, data)));
+          return true;
+        } catch {
+          return false;
+        }
+      };
+
+      if (
+        !send("meta", {
+          streamId: streamState.id,
+          chatId: streamState.chatId,
+          assistantId: streamState.assistantId,
+          status: streamState.status,
+          cursor: currentCursor,
+        })
+      ) {
+        controller.close();
+        return;
+      }
+
+      while (true) {
+        const latest = streamState.content;
+        if (currentCursor < latest.length) {
+          const delta = latest.slice(currentCursor);
+          currentCursor = latest.length;
+          if (!send("delta", { delta, cursor: currentCursor })) {
+            break;
+          }
+        }
+
+        if (streamState.status === "done") {
+          send("done", { cursor: currentCursor });
+          break;
+        }
+
+        if (streamState.status === "error") {
+          send("error", { message: streamState.error ?? "Chat stream failed" });
+          break;
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+
+      controller.close();
+    },
+  });
+
+  const headers = new Headers({
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+  });
+
+  if (setCookieHeader) {
+    headers.set("Set-Cookie", setCookieHeader);
+  }
+
+  return new Response(stream, { headers });
+}
+
+export async function GET(request: NextRequest) {
+  const { userId, setCookieHeader } = getOrCreateUserId(request);
+  const { searchParams } = new URL(request.url);
+  const streamId = searchParams.get("streamId");
+  const chatId = searchParams.get("chatId");
+
+  if (streamId) {
+    const streamState = getStream(userId, streamId);
+    if (!streamState) {
+      const response = NextResponse.json({ error: "Stream not found" }, { status: 404 });
+      if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+      return response;
+    }
+    const cursor = Number(searchParams.get("cursor") ?? "0");
+    return createStreamResponse(streamState, Number.isNaN(cursor) ? 0 : cursor, setCookieHeader);
+  }
+
+  if (chatId) {
+    const history = getChatHistory(userId, chatId);
+    const response = NextResponse.json(history);
+    if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+    return response;
+  }
+
+  return NextResponse.json({ error: "Missing chatId or streamId" }, { status: 400 });
+}
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-
-    // Validate request body
     const parseResult = ChatRequestSchema.safeParse(body);
     if (!parseResult.success) {
       return NextResponse.json(
@@ -16,91 +143,39 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { sessionId, vectorStoreId, report, messages, focusFindingId, images } = parseResult.data;
-
-    // Validate we have at least one message
-    if (messages.length === 0) {
-      return NextResponse.json(
-        { error: "At least one message is required" },
-        { status: 400 }
-      );
+    const { chatId, vectorStoreId, report, content, focusFindingId, images } = parseResult.data;
+    if (!content.trim()) {
+      return NextResponse.json({ error: "Message content is required" }, { status: 400 });
     }
 
-    // Get OpenAI client
-    const client = getOpenAIClient();
-
-    // Build vector store IDs array - regulations store + user uploads store
-    const regulationsStoreId = getRegulationsVectorStoreId();
-    const vectorStoreIds: string[] = [];
-    if (regulationsStoreId) {
-      vectorStoreIds.push(regulationsStoreId);
-    }
-    if (vectorStoreId) {
-      vectorStoreIds.push(vectorStoreId);
-    }
-
-    // Convert images to AnalysisImage format if provided
-    const analysisImages = images?.map(img => ({
-      base64: img.base64,
-      mimeType: img.mimeType,
-      filename: img.filename,
-    }));
-
-    const textStream = await runComplianceChatStream(
-      client,
-      vectorStoreIds,
+    const { userId, setCookieHeader } = getOrCreateUserId(request);
+    const { streamId, existingStream } = startChatStream({
+      userId,
+      chatId,
+      vectorStoreId,
       report,
-      messages,
+      content,
       focusFindingId,
-      analysisImages
-    );
-
-    const stream = new ReadableStream({
-      async start(controller) {
-        const encoder = new TextEncoder();
-        let aborted = false;
-        const onAbort = () => {
-          aborted = true;
-        };
-        request.signal?.addEventListener("abort", onAbort);
-
-        try {
-          for await (const chunk of textStream) {
-            if (aborted) break;
-            try {
-              controller.enqueue(encoder.encode(chunk));
-            } catch {
-              aborted = true;
-              break;
-            }
-          }
-          if (!aborted) {
-            controller.close();
-          } else {
-            try {
-              controller.close();
-            } catch {
-              // Ignore close errors after abort
-            }
-          }
-        } catch (streamError) {
-          if (!aborted) {
-            console.error("Chat stream error:", streamError);
-            controller.error(streamError);
-          }
-        } finally {
-          request.signal?.removeEventListener("abort", onAbort);
-        }
-      },
+      images,
     });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-cache, no-transform",
-        Connection: "keep-alive",
-      },
-    });
+    if (existingStream) {
+      const response = NextResponse.json(
+        { error: "Stream already active", streamId },
+        { status: 409 }
+      );
+      if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+      return response;
+    }
+
+    const streamState = getStream(userId, streamId);
+    if (!streamState) {
+      const response = NextResponse.json({ error: "Stream not found" }, { status: 404 });
+      if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+      return response;
+    }
+
+    return createStreamResponse(streamState, 0, setCookieHeader);
   } catch (error) {
     console.error("Chat error:", error);
     return NextResponse.json(
@@ -108,4 +183,20 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+export async function DELETE(request: NextRequest) {
+  const { userId, setCookieHeader } = getOrCreateUserId(request);
+  const { searchParams } = new URL(request.url);
+  const chatId = searchParams.get("chatId");
+  if (!chatId) {
+    const response = NextResponse.json({ error: "chatId is required" }, { status: 400 });
+    if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+    return response;
+  }
+
+  clearChat(userId, chatId);
+  const response = NextResponse.json({ ok: true });
+  if (setCookieHeader) response.headers.set("Set-Cookie", setCookieHeader);
+  return response;
 }

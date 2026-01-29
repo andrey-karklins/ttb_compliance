@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { ChatPanel } from "./components/ChatPanel";
 import { ResultsPanel } from "./components/ResultsPanel";
-import { clearChatMemory } from "../lib/chatStore";
+import { clearChatMemory, setChatUserId } from "../lib/chatStore";
 import type {
   UploadedFile,
   ContextFormData,
@@ -12,7 +12,6 @@ import type {
   AnalyzeRequest,
   UploadResponse,
   AnalysisImage,
-  ChatImage,
 } from "@/lib/schema";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -28,7 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 // MOCKED DATA
 // ============================================================================
 
-type NavItem = "dashboard" | "products" | "copilot" | "knowledgebase";
+type NavItem = "dashboard" | "products" | "pilot" | "compliance" | "knowledgebase";
 
 type Product = {
   id: string;
@@ -116,8 +115,10 @@ const MOCK_KNOWLEDGE_DOCS: KnowledgeDoc[] = [
 
 const SESSION_KEY = "ttb_session_id";
 const CHAT_THREADS_KEY = "ttb_chat_threads_v1";
+const REPORT_THREADS_KEY = "ttb_report_threads_v1";
 const REPORT_HISTORY_KEY = "ttb_report_history_v1";
 const ACTIVE_CHAT_KEY = "ttb_active_chat_id_v1";
+const ACTIVE_REPORT_THREAD_KEY = "ttb_active_report_thread_id_v1";
 const UPLOAD_CONCURRENCY = 3;
 const DEFAULT_CHAT_TITLE = "New chat";
 
@@ -126,9 +127,25 @@ type ChatThread = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  autoTitle?: boolean;
+};
+
+type ReportThread = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
   reportId: string | null;
-  kind: "chat" | "report";
-  autoTitle: boolean;
+};
+
+type LegacyThread = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  kind?: "chat" | "report";
+  reportId?: string | null;
+  autoTitle?: boolean;
 };
 
 type ReportEntry = {
@@ -137,6 +154,22 @@ type ReportEntry = {
   createdAt: string;
   report: ComplianceReport;
   vectorStoreId?: string;
+};
+
+type AnalysisJobState = {
+  status: "running" | "done" | "error";
+  reportId?: string;
+  vectorStoreId?: string;
+  error?: string;
+};
+
+type AnalysisStatusPayload = {
+  status?: "running" | "done" | "error";
+  report?: ComplianceReport;
+  reportId?: string;
+  vectorStoreId?: string;
+  error?: string;
+  threadId?: string;
 };
 
 function loadFromStorage<T>(key: string, fallback: T): T {
@@ -278,24 +311,21 @@ export default function Home() {
     producer: "",
     additionalNotes: "",
   });
-  const [report, setReport] = useState<ComplianceReport | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [focusFindingId, setFocusFindingId] = useState<string | undefined>();
   const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
+  const [reportThreads, setReportThreads] = useState<ReportThread[]>([]);
   const [reportHistory, setReportHistory] = useState<ReportEntry[]>([]);
   const [activeChatId, setActiveChatId] = useState<string>("");
-  const [activeReportId, setActiveReportId] = useState<string | null>(null);
+  const [activeReportThreadId, setActiveReportThreadId] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const analysisPollersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
+  const hasSyncedAnalysesRef = useRef(false);
 
-  // Mode state: "chat" = new chat (no thread yet), "upload" = upload panel, "thread" = viewing existing thread
-  const [copilotMode, setCopilotMode] = useState<"chat" | "upload" | "thread">("chat");
   
   // Stable ID for new chats (generated once, reused until thread is created)
   const [pendingChatId, setPendingChatId] = useState<string>(() => uuidv4());
   
-  // Track which thread is currently being analyzed (for showing loading state)
-  const [analyzingThreadId, setAnalyzingThreadId] = useState<string | null>(null);
+  const [analysisJobs, setAnalysisJobs] = useState<Record<string, AnalysisJobState>>({});
 
   // Filter state for products
   const [productStatusFilter, setProductStatusFilter] = useState<string>("all");
@@ -305,56 +335,119 @@ export default function Home() {
   const [docCategoryFilter, setDocCategoryFilter] = useState<string>("all");
   const [docSearchQuery, setDocSearchQuery] = useState<string>("");
 
-  // Initialize session
+  // Initialize session (cookie-backed, local cache for resilience)
   useEffect(() => {
-    let id = localStorage.getItem(SESSION_KEY);
-    if (!id) {
-      id = uuidv4();
-      localStorage.setItem(SESSION_KEY, id);
-    }
-    setSessionId(id);
+    let isMounted = true;
+    const initSession = async () => {
+      const storedId = localStorage.getItem(SESSION_KEY);
+      try {
+        const response = await fetch("/api/session", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ clientId: storedId }),
+        });
+        const data = response.ok ? await response.json() : null;
+        const nextId = data?.sessionId || storedId || uuidv4();
+        localStorage.setItem(SESSION_KEY, nextId);
+        if (isMounted) {
+          setSessionId(nextId);
+          setChatUserId(nextId);
+        }
+      } catch {
+        const fallbackId = storedId || uuidv4();
+        localStorage.setItem(SESSION_KEY, fallbackId);
+        if (isMounted) {
+          setSessionId(fallbackId);
+          setChatUserId(fallbackId);
+        }
+      }
+    };
+    initSession();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   useEffect(() => {
-    const storedChatsRaw = loadFromStorage<ChatThread[]>(CHAT_THREADS_KEY, []);
+    const storedChatsRaw = loadFromStorage<LegacyThread[]>(CHAT_THREADS_KEY, []);
+    const storedReportThreadsRaw = loadFromStorage<ReportThread[]>(REPORT_THREADS_KEY, []);
     const storedReports = loadFromStorage<ReportEntry[]>(REPORT_HISTORY_KEY, []);
-    const storedChats = storedChatsRaw.map((thread) => ({
-      ...thread,
-      kind: thread.kind ?? (thread.reportId ? "report" : "chat"),
+
+    const legacyReportThreads = storedChatsRaw.filter(
+      (thread) => thread.kind === "report" || Boolean(thread.reportId)
+    );
+    const legacyChatThreads = storedChatsRaw.filter(
+      (thread) =>
+        !thread.reportId &&
+        thread.kind !== "report" &&
+        !thread.autoTitle
+    );
+
+    const normalizedChatThreads: ChatThread[] = legacyChatThreads.map((thread) => ({
+      id: thread.id,
+      title: thread.title || DEFAULT_CHAT_TITLE,
+      createdAt: thread.createdAt || new Date().toISOString(),
+      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
     }));
-    // Filter out any draft threads that don't have content
-    const persistedChats = storedChats.filter((thread) => !thread.autoTitle || thread.reportId);
+
+    const normalizedLegacyReportThreads: ReportThread[] = legacyReportThreads.map((thread) => ({
+      id: thread.id,
+      title: thread.title || "Analyzing label...",
+      createdAt: thread.createdAt || new Date().toISOString(),
+      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
+      reportId: thread.reportId ?? null,
+    }));
+
+    const normalizedStoredReportThreads: ReportThread[] = storedReportThreadsRaw.map((thread) => ({
+      id: thread.id,
+      title: thread.title || "Analyzing label...",
+      createdAt: thread.createdAt || new Date().toISOString(),
+      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
+      reportId: thread.reportId ?? null,
+    }));
+
+    const reportThreadsById = new Map<string, ReportThread>();
+    [...normalizedLegacyReportThreads, ...normalizedStoredReportThreads].forEach((thread) => {
+      if (!thread.id) return;
+      reportThreadsById.set(thread.id, thread);
+    });
+    const mergedReportThreads = Array.from(reportThreadsById.values());
 
     const storedActiveChatId = localStorage.getItem(ACTIVE_CHAT_KEY);
-    let nextActiveChatId = "";
-    let nextActiveReportId: string | null = null;
-    let nextMode: "chat" | "upload" | "thread" = "chat";
+    const storedActiveReportThreadId = localStorage.getItem(ACTIVE_REPORT_THREAD_KEY);
 
-    if (storedActiveChatId && persistedChats.some((thread) => thread.id === storedActiveChatId)) {
-      nextActiveChatId = storedActiveChatId;
-      const selectedChat = persistedChats.find((thread) => thread.id === storedActiveChatId);
-      nextActiveReportId = selectedChat?.reportId ?? null;
-      nextMode = "thread";
-    } else if (persistedChats.length > 0) {
-      // Default to most recent thread
-      const sorted = [...persistedChats].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      );
-      nextActiveChatId = sorted[0].id;
-      nextActiveReportId = sorted[0].reportId ?? null;
-      nextMode = "thread";
-    }
+    const sortedChats = [...normalizedChatThreads].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
+    const sortedReports = [...mergedReportThreads].sort(
+      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+    );
 
-    setChatThreads(persistedChats);
+    const nextActiveChatId =
+      storedActiveChatId && normalizedChatThreads.some((thread) => thread.id === storedActiveChatId)
+        ? storedActiveChatId
+        : sortedChats[0]?.id ?? "";
+
+    const nextActiveReportThreadId =
+      storedActiveReportThreadId &&
+      mergedReportThreads.some((thread) => thread.id === storedActiveReportThreadId)
+        ? storedActiveReportThreadId
+        : sortedReports[0]?.id ?? "";
+
+    setChatThreads(normalizedChatThreads);
+    setReportThreads(mergedReportThreads);
     setReportHistory(storedReports);
     setActiveChatId(nextActiveChatId);
-    setActiveReportId(nextActiveReportId);
-    setCopilotMode(nextMode);
+    setActiveReportThreadId(nextActiveReportThreadId);
   }, []);
 
   useEffect(() => {
     localStorage.setItem(CHAT_THREADS_KEY, JSON.stringify(chatThreads));
   }, [chatThreads]);
+
+  useEffect(() => {
+    localStorage.setItem(REPORT_THREADS_KEY, JSON.stringify(reportThreads));
+  }, [reportThreads]);
 
   useEffect(() => {
     localStorage.setItem(REPORT_HISTORY_KEY, JSON.stringify(reportHistory));
@@ -367,49 +460,49 @@ export default function Home() {
   }, [activeChatId]);
 
   useEffect(() => {
-    if (!activeReportId) {
-      setReport(null);
-      setFocusFindingId(undefined);
-      return;
+    if (activeReportThreadId) {
+      localStorage.setItem(ACTIVE_REPORT_THREAD_KEY, activeReportThreadId);
     }
-    const entry = reportHistory.find((item) => item.id === activeReportId);
-    setReport(entry?.report ?? null);
-    setAnalysisError(null);
+  }, [activeReportThreadId]);
+
+  useEffect(() => {
     setFocusFindingId(undefined);
-    setIsAnalyzing(false);
-  }, [activeReportId, reportHistory]);
+  }, [activeReportThreadId]);
 
   // Computed values
   const hasReadyFiles = files.some((f) => f.status === "ready");
   const hasUploadingFiles = files.some((f) => f.status === "uploading" || f.status === "processing");
   const hasImages = files.some((f) => f.isImage && f.status === "ready");
-  const isUploadMode = copilotMode === "upload";
-  const isNewChatMode = copilotMode === "chat";
-  const isViewingAnalyzingThread = activeChatId === analyzingThreadId && analyzingThreadId !== null;
-  const showUploadPanel = isUploadMode && !isAnalyzing && !report && !analysisError;
-  const activeThread = useMemo(
-    () => chatThreads.find((thread) => thread.id === activeChatId) || null,
-    [chatThreads, activeChatId]
-  );
-  const isPendingReportThread = Boolean(
-    activeThread && activeThread.kind === "report" && !activeThread.reportId
-  );
-  const reportLoading = (isViewingAnalyzingThread && isAnalyzing) || isPendingReportThread;
-  const reportError = isViewingAnalyzingThread ? analysisError : null;
-  const activeReportEntry = useMemo(
-    () => reportHistory.find((entry) => entry.id === activeReportId) || null,
-    [reportHistory, activeReportId]
+  const isAnalyzing = useMemo(
+    () => Object.values(analysisJobs).some((job) => job.status === "running"),
+    [analysisJobs]
   );
 
-  const chatVectorStoreId = useMemo(() => {
-    if (isUploadMode) {
-      return vectorStoreId || "";
-    }
-    if (activeReportId) {
-      return activeReportEntry?.vectorStoreId ?? "";
-    }
-    return "";
-  }, [activeReportId, vectorStoreId, activeReportEntry, isUploadMode]);
+
+  const activeReportThread = useMemo(
+    () => reportThreads.find((thread) => thread.id === activeReportThreadId) || null,
+    [reportThreads, activeReportThreadId]
+  );
+  const activeReportEntry = useMemo(
+    () =>
+      activeReportThread?.reportId
+        ? reportHistory.find((entry) => entry.id === activeReportThread.reportId) || null
+        : null,
+    [reportHistory, activeReportThread]
+  );
+
+  const activeReport = activeReportEntry?.report ?? null;
+  const reportLoading = activeReportThread
+    ? analysisJobs[activeReportThread.id]?.status === "running"
+    : false;
+  const reportError =
+    activeReportThread && analysisJobs[activeReportThread.id]?.status === "error"
+      ? analysisJobs[activeReportThread.id]?.error ?? null
+      : null;
+  const reportVectorStoreId =
+    activeReportEntry?.vectorStoreId ??
+    (activeReportThread ? analysisJobs[activeReportThread.id]?.vectorStoreId : undefined) ??
+    "";
 
   const sortedChatThreads = useMemo(
     () =>
@@ -419,36 +512,13 @@ export default function Home() {
     [chatThreads]
   );
 
-  const visibleChatThreads = useMemo(
+  const sortedReportThreads = useMemo(
     () =>
-      sortedChatThreads.filter((thread) => {
-        // Show threads with completed reports
-        if (thread.reportId) return true;
-        // Show report threads that are being analyzed (no reportId yet but kind is report)
-        if (thread.kind === "report" && !thread.reportId) return true;
-        // Show chats only after they have content (not autoTitle)
-        if (thread.kind === "chat") return !thread.autoTitle;
-        return false;
-      }),
-    [sortedChatThreads]
+      [...reportThreads].sort(
+        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
+      ),
+    [reportThreads]
   );
-
-  const draftChatImages: ChatImage[] = useMemo(() => {
-    return files
-      .filter((f) => f.isImage && f.status === "ready" && f.imageBase64)
-      .map((f) => ({
-        base64: f.imageBase64!,
-        mimeType: f.mimeType,
-        filename: f.name,
-      }));
-  }, [files]);
-
-  const activeChatImages = useMemo(() => {
-    if (!isUploadMode) {
-      return [];
-    }
-    return draftChatImages;
-  }, [draftChatImages, isUploadMode]);
 
   // Auto-fill context from extracted details
   useEffect(() => {
@@ -574,10 +644,10 @@ export default function Home() {
   // Called when user sends first message - creates thread if needed
   const handleChatActivity = useCallback((chatId: string, content: string) => {
     const now = new Date().toISOString();
-    
+
     // Check if this is a new chat (chatId might be temporary)
     const existingThread = chatThreads.find((t) => t.id === chatId);
-    
+
     if (!existingThread) {
       // Create new thread for first message
       const newThread: ChatThread = {
@@ -585,69 +655,63 @@ export default function Home() {
         title: deriveChatTitle(content),
         createdAt: now,
         updatedAt: now,
-        reportId: null,
-        kind: "chat",
-        autoTitle: false,
       };
       setChatThreads((prev) => [newThread, ...prev]);
       setActiveChatId(chatId);
-      setCopilotMode("thread");
+      setActiveNav("pilot");
     } else {
       // Update existing thread
       setChatThreads((prev) =>
         prev.map((thread) => {
           if (thread.id !== chatId) return thread;
-          if (thread.autoTitle) {
-            return {
-              ...thread,
-              title: deriveChatTitle(content),
-              autoTitle: false,
-              updatedAt: now,
-            };
-          }
           return { ...thread, updatedAt: now };
         })
       );
     }
   }, [chatThreads]);
 
+  const handleReportChatActivity = useCallback((threadId: string, content: string) => {
+    void content;
+    const now = new Date().toISOString();
+    setReportThreads((prev) =>
+      prev.map((thread) =>
+        thread.id === threadId ? { ...thread, updatedAt: now } : thread
+      )
+    );
+  }, []);
+
   const handleSelectChat = useCallback(
     (chatId: string) => {
       setActiveChatId(chatId);
-      const selected = chatThreads.find((thread) => thread.id === chatId);
-      setActiveReportId(selected?.reportId ?? null);
       setFocusFindingId(undefined);
-      setCopilotMode("thread");
-      // Clear upload state when switching threads (unless it's the analyzing thread)
-      if (chatId !== analyzingThreadId) {
-        setFiles([]);
-        setVectorStoreId(undefined);
-      }
-      setReport(selected?.reportId ? reportHistory.find((r) => r.id === selected.reportId)?.report ?? null : null);
-      // Clear error when switching to a different thread
-      if (chatId !== analyzingThreadId) {
-        setAnalysisError(null);
-      }
+      setActiveNav("pilot");
     },
-    [chatThreads, reportHistory, analyzingThreadId]
+    []
+  );
+
+  const handleSelectReportThread = useCallback(
+    (threadId: string) => {
+      setActiveReportThreadId(threadId);
+      setFocusFindingId(undefined);
+      setActiveNav("compliance");
+      setFiles([]);
+      setVectorStoreId(undefined);
+    },
+    []
   );
 
   // Start a new chat - doesn't create thread until first message
   const handleNewChat = useCallback(() => {
     setActiveChatId("");
-    setActiveReportId(null);
     setFocusFindingId(undefined);
-    setCopilotMode("chat");
-    setReport(null);
-    setFiles([]);
-    setVectorStoreId(undefined);
-    setAnalysisError(null);
+    setActiveNav("pilot");
     setPendingChatId(uuidv4()); // Generate new ID for new chat
   }, []);
 
-  // Switch to upload mode - doesn't create thread until analysis completes
+  // Start a new compliance analysis
   const handleStartUpload = useCallback(() => {
-    setReport(null);
+    setActiveNav("compliance");
+    setActiveReportThreadId("");
     setVectorStoreId(undefined);
     setFiles([]);
     setContext({
@@ -658,48 +722,240 @@ export default function Home() {
       producer: "",
       additionalNotes: "",
     });
-    setAnalysisError(null);
     setFocusFindingId(undefined);
-    setIsAnalyzing(false);
-    setActiveReportId(null);
-    setActiveChatId("");
-    setCopilotMode("upload");
+  }, []);
+
+  const stopAnalysisPolling = useCallback((threadId: string) => {
+    const poller = analysisPollersRef.current[threadId];
+    if (poller) {
+      clearInterval(poller);
+      delete analysisPollersRef.current[threadId];
+    }
   }, []);
 
   const handleDeleteChat = useCallback(
     (chatId: string) => {
-      const thread = chatThreads.find((t) => t.id === chatId);
-      const reportId = thread?.reportId;
-      
       setChatThreads((prev) => {
         const remaining = prev.filter((t) => t.id !== chatId);
         if (chatId === activeChatId) {
-          if (remaining.length === 0) {
-            // No threads left, go to new chat mode
-            setActiveChatId("");
-            setActiveReportId(null);
-            setCopilotMode("chat");
-          } else {
-            // Select the next available thread
-            const nextActive = remaining[0];
-            setActiveChatId(nextActive.id);
-            setActiveReportId(nextActive.reportId ?? null);
-            setCopilotMode("thread");
+          const nextActive = remaining[0]?.id ?? "";
+          setActiveChatId(nextActive);
+          if (!nextActive) {
+            setPendingChatId(uuidv4());
           }
         }
         return remaining;
       });
-      
+      clearChatMemory(chatId);
+    },
+    [activeChatId]
+  );
+
+  const handleDeleteReportThread = useCallback(
+    (threadId: string) => {
+      const thread = reportThreads.find((t) => t.id === threadId);
+      const reportId = thread?.reportId;
+
+      setReportThreads((prev) => {
+        const remaining = prev.filter((t) => t.id !== threadId);
+        if (threadId === activeReportThreadId) {
+          const nextActive = remaining[0]?.id ?? "";
+          setActiveReportThreadId(nextActive);
+        }
+        return remaining;
+      });
+
       if (reportId) {
         setReportHistory((prev) => prev.filter((entry) => entry.id !== reportId));
       }
-      clearChatMemory(chatId);
+
+      setAnalysisJobs((prev) => {
+        if (!prev[threadId]) return prev;
+        const next = { ...prev };
+        delete next[threadId];
+        return next;
+      });
+
+      stopAnalysisPolling(threadId);
+
+      clearChatMemory(threadId);
     },
-    [activeChatId, chatThreads]
+    [activeReportThreadId, reportThreads, stopAnalysisPolling]
   );
 
+  const ensureReportThread = useCallback((threadId: string, title?: string) => {
+    setReportThreads((prev) => {
+      if (prev.some((thread) => thread.id === threadId)) return prev;
+      const now = new Date().toISOString();
+      const newThread: ReportThread = {
+        id: threadId,
+        title: title || "Analyzing label...",
+        createdAt: now,
+        updatedAt: now,
+        reportId: null,
+      };
+      return [newThread, ...prev];
+    });
+  }, []);
+
+  const applyAnalysisReport = useCallback(
+    (threadId: string, result: ComplianceReport, storeId?: string) => {
+      const reportTitle = deriveReportTitle(result);
+      const completedAt = new Date().toISOString();
+
+      setReportHistory((prev) => {
+        const nextEntry: ReportEntry = {
+          id: result.run_id,
+          title: reportTitle,
+          createdAt: result.created_at,
+          report: result,
+          vectorStoreId: storeId || undefined,
+        };
+        const existingIndex = prev.findIndex((entry) => entry.id === nextEntry.id);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next[existingIndex] = nextEntry;
+          return next;
+        }
+        return [nextEntry, ...prev];
+      });
+
+      setReportThreads((prev) =>
+        prev.map((thread) =>
+          thread.id === threadId
+            ? { ...thread, reportId: result.run_id, title: reportTitle, updatedAt: completedAt }
+            : thread
+        )
+      );
+    },
+    []
+  );
+
+  const handleAnalysisStatus = useCallback(
+    (threadId: string, payload: AnalysisStatusPayload) => {
+      if (!payload?.status) return;
+
+      if (payload.status === "running") {
+        ensureReportThread(threadId);
+        setAnalysisJobs((prev) => ({
+          ...prev,
+          [threadId]: {
+            status: "running",
+            reportId: payload.reportId,
+            vectorStoreId: payload.vectorStoreId,
+          },
+        }));
+        return;
+      }
+
+      if (payload.status === "done" && payload.report) {
+        applyAnalysisReport(threadId, payload.report, payload.vectorStoreId);
+        setAnalysisJobs((prev) => {
+          if (!prev[threadId]) return prev;
+          const next = { ...prev };
+          delete next[threadId];
+          return next;
+        });
+        stopAnalysisPolling(threadId);
+        return;
+      }
+
+      if (payload.status === "error") {
+        setAnalysisJobs((prev) => ({
+          ...prev,
+          [threadId]: {
+            status: "error",
+            error: payload.error || "Analysis failed",
+          },
+        }));
+        stopAnalysisPolling(threadId);
+      }
+    },
+    [applyAnalysisReport, ensureReportThread, stopAnalysisPolling]
+  );
+
+  const startAnalysisPolling = useCallback(
+    (threadId: string) => {
+      if (analysisPollersRef.current[threadId]) return;
+
+      const poll = async () => {
+        try {
+          const response = await fetch(`/api/analyze?threadId=${encodeURIComponent(threadId)}`);
+          if (response.status === 404) {
+            handleAnalysisStatus(threadId, { status: "error", error: "Analysis not found. Please retry." });
+            return;
+          }
+          if (!response.ok) {
+            return;
+          }
+          const data = await response.json();
+          handleAnalysisStatus(threadId, data);
+        } catch {
+          // Ignore transient errors
+        }
+      };
+
+      void poll();
+      analysisPollersRef.current[threadId] = setInterval(poll, 2000);
+    },
+    [handleAnalysisStatus]
+  );
+
+  const syncPendingAnalyses = useCallback(async () => {
+    const pendingThreads = reportThreads.filter((thread) => !thread.reportId);
+    if (pendingThreads.length === 0) return;
+
+    setAnalysisJobs((prev) => {
+      const next = { ...prev };
+      for (const thread of pendingThreads) {
+        if (!next[thread.id]) {
+          next[thread.id] = { status: "running" };
+        }
+      }
+      return next;
+    });
+
+    const activeJobs = await fetch("/api/analyze?status=active")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => (Array.isArray(data?.jobs) ? data.jobs : []))
+      .catch(() => []);
+
+    const activeIds = new Set<string>();
+    for (const job of activeJobs) {
+      if (!job?.threadId) continue;
+      activeIds.add(job.threadId);
+      handleAnalysisStatus(job.threadId, job);
+      startAnalysisPolling(job.threadId);
+    }
+
+    await Promise.all(
+      pendingThreads
+        .filter((thread) => !activeIds.has(thread.id))
+        .map(async (thread) => {
+          try {
+            const response = await fetch(`/api/analyze?threadId=${encodeURIComponent(thread.id)}`);
+            if (response.status === 404) {
+              handleAnalysisStatus(thread.id, {
+                status: "error",
+                error: "Analysis not found. Please retry.",
+              });
+              return;
+            }
+            if (!response.ok) return;
+            const data = await response.json();
+            handleAnalysisStatus(thread.id, data);
+            if (data?.status === "running") {
+              startAnalysisPolling(thread.id);
+            }
+          } catch {
+            // Ignore sync failures
+          }
+        })
+    );
+  }, [reportThreads, handleAnalysisStatus, startAnalysisPolling]);
+
   const handleAnalyze = async () => {
-    if (!isUploadMode || !hasReadyFiles || isAnalyzing || !vectorStoreId || !hasImages) {
+    if (!hasReadyFiles || isAnalyzing || !vectorStoreId || !hasImages) {
       return;
     }
 
@@ -712,25 +968,22 @@ export default function Home() {
     
     // Create thread IMMEDIATELY so it shows in history
     const newThreadId = uuidv4();
-    const newThread: ChatThread = {
+    const newThread: ReportThread = {
       id: newThreadId,
       title: pendingTitle,
       createdAt: now,
       updatedAt: now,
       reportId: null, // Will be set when analysis completes
-      kind: "report",
-      autoTitle: false,
     };
-    setChatThreads((prev) => [newThread, ...prev]);
-    
-    // Switch to viewing this thread
-    setActiveChatId(newThreadId);
-    setActiveReportId(null);
-    setCopilotMode("thread");
-    setAnalyzingThreadId(newThreadId);
-    setIsAnalyzing(true);
-    setAnalysisError(null);
+    setReportThreads((prev) => [newThread, ...prev]);
 
+    // Switch to viewing this thread
+    setActiveNav("compliance");
+    setActiveReportThreadId(newThreadId);
+    setAnalysisJobs((prev) => ({
+      ...prev,
+      [newThreadId]: { status: "running", vectorStoreId },
+    }));
     try {
       const images: AnalysisImage[] = readyFiles
         .filter((f) => f.isImage && f.imageBase64)
@@ -741,7 +994,7 @@ export default function Home() {
         }));
 
       const request: AnalyzeRequest = {
-        sessionId,
+        threadId: newThreadId,
         vectorStoreId,
         context,
         images,
@@ -760,46 +1013,33 @@ export default function Home() {
         throw new Error(result.error || "Analysis failed");
       }
 
-      setReport(result);
-      const reportTitle = deriveReportTitle(result);
-      
-      // Create report entry
-      const newEntry: ReportEntry = {
-        id: result.run_id,
-        title: reportTitle,
-        createdAt: result.created_at,
-        report: result,
-        vectorStoreId: vectorStoreId || undefined,
-      };
-      setReportHistory((prev) => {
-        const existingIndex = prev.findIndex((entry) => entry.id === newEntry.id);
-        if (existingIndex >= 0) {
-          const next = [...prev];
-          next[existingIndex] = newEntry;
-          return next;
-        }
-        return [newEntry, ...prev];
-      });
-      
-      // Update the thread with the report ID and final title
-      const completedAt = new Date().toISOString();
-      setChatThreads((prev) =>
-        prev.map((thread) =>
-          thread.id === newThreadId
-            ? { ...thread, reportId: result.run_id, title: reportTitle, updatedAt: completedAt }
-            : thread
-        )
-      );
-      
-      setActiveReportId(result.run_id);
+      handleAnalysisStatus(newThreadId, result);
+      if (result.status === "running") {
+        startAnalysisPolling(newThreadId);
+      }
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : "Analysis failed");
-      // Keep the thread but mark it as failed (user can retry or delete)
-    } finally {
-      setIsAnalyzing(false);
-      setAnalyzingThreadId(null);
+      setAnalysisJobs((prev) => ({
+        ...prev,
+        [newThreadId]: {
+          status: "error",
+          error: error instanceof Error ? error.message : "Analysis failed",
+        },
+      }));
     }
   };
+
+  useEffect(() => {
+    return () => {
+      Object.values(analysisPollersRef.current).forEach((poller) => clearInterval(poller));
+      analysisPollersRef.current = {};
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionId || hasSyncedAnalysesRef.current || reportThreads.length === 0) return;
+    hasSyncedAnalysesRef.current = true;
+    void syncPendingAnalyses();
+  }, [sessionId, reportThreads.length, syncPendingAnalyses]);
 
   const handleAskAboutFinding = useCallback((findingId: string) => {
     setFocusFindingId(findingId);
@@ -874,7 +1114,8 @@ export default function Home() {
   const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
     { id: "dashboard", label: "Dashboard", icon: <DashboardIcon className="w-5 h-5" /> },
     { id: "products", label: "Products", icon: <ProductsIcon className="w-5 h-5" /> },
-    { id: "copilot", label: "AI Copilot", icon: <CopilotIcon className="w-5 h-5" /> },
+    { id: "pilot", label: "AI Assistant", icon: <CopilotIcon className="w-5 h-5" /> },
+    { id: "compliance", label: "AI Compliance", icon: <FileIcon className="w-5 h-5" /> },
     { id: "knowledgebase", label: "TTB Knowledgebase", icon: <KnowledgeIcon className="w-5 h-5" /> },
   ];
 
@@ -1201,279 +1442,152 @@ export default function Home() {
           )}
 
           {/* ================================================================
-              AI COPILOT (Chat + Label Analysis)
+              AI PILOT
           ================================================================ */}
-          {activeNav === "copilot" && (
+          {activeNav === "pilot" && (
             <div className="p-6 h-[calc(100vh-4rem)]">
               <div className="h-full flex gap-6">
-                {/* Main chat/report area */}
-                <div className="flex-1 flex gap-6 min-w-0">
-                  {/* Upload Mode - Show upload panel */}
-                  {isUploadMode && (
-                    <div className="flex-1 min-w-0">
-                      {showUploadPanel ? (
-                        <Card className="h-full">
-                          <CardHeader>
-                            <CardTitle>Upload Label Assets</CardTitle>
-                            <CardDescription>
-                              Drop label images (PNG, JPG, WebP) and optional supporting PDFs. Include front/back labels for best results.
-                            </CardDescription>
-                          </CardHeader>
-                          <CardContent className="space-y-6">
-                            {/* Upload area */}
-                            <div
-                              className="border-2 border-dashed border-muted rounded-xl p-8 text-center hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-colors"
-                              onClick={() => fileInputRef.current?.click()}
-                            >
-                              <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept=".pdf,.png,.jpg,.jpeg,.webp"
-                                multiple
-                                className="hidden"
-                                onChange={handleFileSelect}
-                              />
-                              <svg className="mx-auto h-12 w-12 text-muted-foreground mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                              </svg>
-                              <p className="text-muted-foreground mb-1">Click to upload or drag and drop</p>
-                              <p className="text-sm text-muted-foreground">PNG, JPG, WEBP, PDF up to 20MB each</p>
-                            </div>
-
-                            {/* File list */}
-                            {files.length > 0 && (
-                              <div className="space-y-3">
-                                <h3 className="text-sm font-medium">Files ({files.length})</h3>
-                                <ul className="space-y-2">
-                                  {files.map((file) => (
-                                    <li key={file.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                                      <div className="flex items-center gap-3">
-                                        <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", file.isImage ? "bg-blue-100" : "bg-blue-100/70")}>
-                                          {file.isImage ? (
-                                            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                            </svg>
-                                          ) : (
-                                            <FileIcon className="w-5 h-5 text-blue-600" />
-                                          )}
-                                        </div>
-                                        <div>
-                                          <p className="text-sm font-medium">{file.name}</p>
-                                          <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}{file.isImage && " • Label"}</p>
-                                        </div>
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                        {file.status === "uploading" && (
-                                          <div className="flex items-center gap-2 text-blue-600">
-                                            <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                            </svg>
-                                            <span className="text-xs">Uploading...</span>
-                                          </div>
-                                        )}
-                                        {file.status === "ready" && <span className="text-xs text-blue-600 font-medium">Ready</span>}
-                                        {file.status === "error" && <span className="text-xs text-destructive">{file.error}</span>}
-                                        <button onClick={() => removeFile(file.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
-                                          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                          </svg>
-                                        </button>
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            )}
-
-                            {/* Optional notes */}
-                            {files.length > 0 && (
-                              <div>
-                                <label className="block text-sm font-medium mb-1">
-                                  Additional Notes (Optional)
-                                </label>
-                                <textarea
-                                  value={context.additionalNotes}
-                                  onChange={(e) => setContext({ ...context, additionalNotes: e.target.value })}
-                                  placeholder="Any specific concerns to check..."
-                                  rows={2}
-                                  className="w-full px-3 py-2 text-sm border rounded-lg bg-background placeholder-muted-foreground focus:ring-2 focus:ring-primary focus:border-primary resize-none"
-                                />
-                              </div>
-                            )}
-
-                            {/* Analyze button */}
-                            <div className="flex justify-end">
-                              <button
-                                onClick={handleAnalyze}
-                                disabled={!hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing}
-                                className={cn(
-                                  "px-6 py-3 rounded-lg font-semibold transition-all",
-                                  !hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing
-                                    ? "bg-muted text-muted-foreground cursor-not-allowed"
-                                    : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
-                                )}
-                              >
-                                {isAnalyzing ? (
-                                  <span className="flex items-center gap-2">
-                                    <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                    </svg>
-                                    Analyzing...
-                                  </span>
-                                ) : (
-                                  "Analyze Label"
-                                )}
-                              </button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ) : (
-                        <Card className="h-full overflow-auto">
-                          <CardContent className="p-6">
-                            <ResultsPanel
-                              report={report}
-                              isLoading={reportLoading}
-                              error={reportError}
-                              onAskAboutFinding={handleAskAboutFinding}
-                            />
-                          </CardContent>
-                        </Card>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Chat Mode (new chat or existing thread) */}
-                  {(isNewChatMode || copilotMode === "thread") && (
-                    <>
-                      {/* Show loading/results panel when viewing an analyzing thread or a thread with a report */}
-                      {(isViewingAnalyzingThread || report) ? (
-                        <>
-                          <div className="flex-1 min-w-0">
-                            <Card className="h-full flex flex-col overflow-hidden">
-                              <ChatPanel
-                                chatId={activeChatId || pendingChatId}
-                                sessionId={sessionId}
-                                vectorStoreId={chatVectorStoreId}
-                                report={report}
-                                images={activeChatImages}
-                                isReportLoading={reportLoading}
-                                onJumpToFinding={handleJumpToFinding}
-                                focusFindingId={focusFindingId}
-                                onClearFocus={handleClearFocus}
-                                onChatActivity={handleChatActivity}
-                              />
-                            </Card>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <Card className="h-full overflow-auto">
-                              <CardContent className="p-6">
-                                <ResultsPanel
-                                  report={report}
-                                  isLoading={reportLoading}
-                                  error={reportError}
-                                  onAskAboutFinding={handleAskAboutFinding}
-                                />
-                              </CardContent>
-                            </Card>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex-1 min-w-0">
-                          <Card className="h-full flex flex-col overflow-hidden">
-                            <ChatPanel
-                              chatId={activeChatId || pendingChatId}
-                              sessionId={sessionId}
-                              vectorStoreId={chatVectorStoreId}
-                              report={report}
-                              images={activeChatImages}
-                              isReportLoading={reportLoading}
-                              onJumpToFinding={handleJumpToFinding}
-                              focusFindingId={focusFindingId}
-                              onClearFocus={handleClearFocus}
-                              onChatActivity={handleChatActivity}
-                            />
-                          </Card>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-
-                {/* Chat threads sidebar - RIGHT SIDE */}
-                <div className="w-72 shrink-0">
+                <div className="w-80 shrink-0">
                   <Card className="h-full flex flex-col overflow-hidden">
                     <CardHeader className="pb-3 shrink-0">
-                      <CardTitle className="text-base">Conversations</CardTitle>
+                      <CardTitle className="text-base">Chats</CardTitle>
                     </CardHeader>
                     <CardContent className="flex-1 flex flex-col p-3 pt-0 min-h-0">
-                      <div className="grid grid-cols-2 gap-2 mb-4 shrink-0">
-                        <button
-                          onClick={handleNewChat}
-                          className={cn(
-                            "px-3 py-2 text-xs font-medium rounded-lg border transition-colors",
-                            isNewChatMode
-                              ? "border-primary bg-primary/10 text-primary"
-                              : "border-primary/20 text-primary hover:bg-primary/5"
-                          )}
-                        >
-                          New chat
-                        </button>
-                        <button
-                          onClick={handleStartUpload}
-                          className={cn(
-                            "px-3 py-2 text-xs font-medium rounded-lg border transition-colors",
-                            isUploadMode
-                              ? "border-blue-500 bg-blue-50 text-blue-600"
-                              : "border-blue-500/20 text-blue-600 hover:bg-blue-50"
-                          )}
-                        >
-                          Analyze Label
-                        </button>
-                      </div>
+                      <button
+                        onClick={handleNewChat}
+                        className="px-3 py-2 text-xs font-medium rounded-lg border border-primary/20 text-primary hover:bg-primary/5 transition-colors"
+                      >
+                        New chat
+                      </button>
+                      <ScrollArea className="flex-1 min-h-0 mt-3">
+                        {sortedChatThreads.length === 0 ? (
+                          <p className="text-xs text-muted-foreground px-2">No chats yet.</p>
+                        ) : (
+                          <div className="space-y-1 pr-2 w-full max-w-full">
+                            {sortedChatThreads.map((thread) => {
+                              const isActive = thread.id === activeChatId;
+                              return (
+                                <div key={thread.id} className="flex items-start gap-2 min-w-0 w-full max-w-full">
+                                  <button
+                                    onClick={() => handleSelectChat(thread.id)}
+                                    className={cn(
+                                      "flex-1 min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden",
+                                      isActive
+                                        ? "border-primary/30 bg-primary/5"
+                                        : "border-transparent hover:bg-muted"
+                                    )}
+                                  >
+                                    <div className="flex items-center justify-between gap-2 min-w-0">
+                                      <div className="text-sm font-medium truncate min-w-0" title={thread.title || DEFAULT_CHAT_TITLE}>
+                                        {thread.title || DEFAULT_CHAT_TITLE}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0 max-w-full overflow-hidden">
+                                      <span className="h-1.5 w-1.5 rounded-full shrink-0 bg-primary" />
+                                      <span className="truncate min-w-0 max-w-full">Chat</span>
+                                      {thread.updatedAt && (
+                                        <span className="text-muted-foreground/60 shrink-0">
+                                          · {formatShortDate(thread.updatedAt)}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteChat(thread.id)}
+                                    className="mt-2 p-1 rounded-full text-muted-foreground hover:text-destructive hover:bg-background transition-colors shrink-0"
+                                    aria-label="Delete chat"
+                                  >
+                                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                    </svg>
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
+                </div>
 
-                      <ScrollArea className="flex-1 min-h-0">
-                        {visibleChatThreads.length === 0 ? (
-                          <p className="text-xs text-muted-foreground px-2">No conversations yet.</p>
+                <div className="flex-1 min-w-0">
+                  <Card className="h-full flex flex-col overflow-hidden">
+                    <ChatPanel
+                      chatId={activeChatId || pendingChatId}
+                      vectorStoreId=""
+                      report={null}
+                      isReportLoading={false}
+                      onChatActivity={handleChatActivity}
+                      title="AI Assistant"
+                      subtitle="Ask general TTB labeling questions."
+                    />
+                  </Card>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ================================================================
+              AI COMPLIANCE (Chat + Label Analysis)
+          ================================================================ */}
+          {activeNav === "compliance" && (
+            <div className="p-6 h-[calc(100vh-4rem)]">
+              <div className="h-full flex gap-6">
+                <div className="w-80 shrink-0">
+                  <Card className="h-full flex flex-col overflow-hidden">
+                    <CardHeader className="pb-3 shrink-0">
+                      <CardTitle className="text-base">Reports</CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex-1 flex flex-col p-3 pt-0 min-h-0">
+                      <button
+                        onClick={handleStartUpload}
+                        className="px-3 py-2 text-xs font-medium rounded-lg border border-blue-500/20 text-blue-600 hover:bg-blue-50 transition-colors"
+                      >
+                        Analyze Label
+                      </button>
+                      <ScrollArea className="flex-1 min-h-0 mt-3">
+                        {sortedReportThreads.length === 0 ? (
+                          <p className="text-xs text-muted-foreground px-2">No reports yet.</p>
                         ) : (
                           <div className="space-y-1 pr-2">
-                            {visibleChatThreads.map((thread) => {
-                              const isActive = thread.id === activeChatId && copilotMode === "thread";
-                              const isThreadAnalyzing =
-                                thread.id === analyzingThreadId ||
-                                (thread.kind === "report" && !thread.reportId);
-                              const statusLabel = isThreadAnalyzing 
-                                ? "Analyzing..." 
-                                : thread.reportId 
-                                  ? "Report" 
-                                  : "Chat";
+                            {sortedReportThreads.map((thread) => {
+                              const isActive = thread.id === activeReportThreadId;
+                              const analysisState = analysisJobs[thread.id];
+                              const isThreadAnalyzing = analysisState?.status === "running";
+                              const isThreadError = analysisState?.status === "error";
+                              const statusLabel = isThreadAnalyzing
+                                ? "Analyzing..."
+                                : isThreadError
+                                  ? "Failed"
+                                  : "Report";
                               const statusDot = isThreadAnalyzing
                                 ? "bg-orange-500 animate-pulse"
-                                : thread.reportId 
-                                  ? "bg-blue-500" 
-                                  : "bg-primary";
+                                : isThreadError
+                                  ? "bg-red-500"
+                                  : "bg-blue-500";
                               return (
                                 <button
                                   key={thread.id}
-                                  onClick={() => handleSelectChat(thread.id)}
+                                  onClick={() => handleSelectReportThread(thread.id)}
                                   className={cn(
-                                    "w-full text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden",
+                                    "w-full min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden",
                                     isActive
-                                      ? "border-primary/30 bg-primary/5"
+                                      ? "border-blue-500/30 bg-blue-50"
                                       : "border-transparent hover:bg-muted"
                                   )}
                                 >
                                   <div className="flex items-start justify-between gap-2 min-w-0">
-                                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                                    <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
                                       {isThreadAnalyzing && (
                                         <svg className="animate-spin h-3.5 w-3.5 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24">
                                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                                         </svg>
                                       )}
-                                      <div className="text-sm font-medium truncate min-w-0" title={thread.title || DEFAULT_CHAT_TITLE}>
-                                        {thread.title || DEFAULT_CHAT_TITLE}
+                                      <div className="text-sm font-medium truncate min-w-0 max-w-full" title={thread.title || "Analyzing label..."}>
+                                        {thread.title || "Analyzing label..."}
                                       </div>
                                     </div>
                                     {!isThreadAnalyzing && (
@@ -1481,10 +1595,10 @@ export default function Home() {
                                         type="button"
                                         onClick={(event) => {
                                           event.stopPropagation();
-                                          handleDeleteChat(thread.id);
+                                          handleDeleteReportThread(thread.id);
                                         }}
                                         className="p-1 rounded-full text-muted-foreground hover:text-destructive hover:bg-background transition-colors shrink-0"
-                                        aria-label="Delete conversation"
+                                        aria-label="Delete report"
                                       >
                                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -1492,9 +1606,9 @@ export default function Home() {
                                       </button>
                                     )}
                                   </div>
-                                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
+                                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0 max-w-full overflow-hidden">
                                     <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot)} />
-                                    <span className="truncate">{statusLabel}</span>
+                                    <span className="truncate min-w-0 max-w-full">{statusLabel}</span>
                                     {!isThreadAnalyzing && thread.updatedAt && (
                                       <span className="text-muted-foreground/60 shrink-0">
                                         · {formatShortDate(thread.updatedAt)}
@@ -1509,6 +1623,161 @@ export default function Home() {
                       </ScrollArea>
                     </CardContent>
                   </Card>
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  {activeReportThreadId ? (
+                    <div className="h-full flex gap-6">
+                      <div className="flex-1 min-w-0">
+                        <Card className="h-full flex flex-col overflow-hidden">
+                          <ChatPanel
+                            chatId={activeReportThreadId}
+                            vectorStoreId={reportVectorStoreId}
+                            report={activeReport}
+                            isReportLoading={reportLoading}
+                            onJumpToFinding={handleJumpToFinding}
+                            focusFindingId={focusFindingId}
+                            onClearFocus={handleClearFocus}
+                            onChatActivity={handleReportChatActivity}
+                            title="AI Compliance Assistant"
+                            subtitle="Ask questions about your compliance report"
+                          />
+                        </Card>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <Card className="h-full overflow-auto">
+                          <CardContent className="p-6">
+                            <ResultsPanel
+                              report={activeReport}
+                              isLoading={reportLoading}
+                              error={reportError}
+                              onAskAboutFinding={handleAskAboutFinding}
+                            />
+                          </CardContent>
+                        </Card>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="h-full flex justify-center">
+                      <Card className="h-full w-full max-w-3xl">
+                      <CardHeader>
+                        <CardTitle>Upload Label Assets</CardTitle>
+                        <CardDescription>
+                          Drop label images (PNG, JPG, WebP) and optional supporting PDFs. Include front/back labels for best results.
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        {/* Upload area */}
+                        <div
+                          className="border-2 border-dashed border-muted rounded-xl p-8 text-center hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-colors"
+                          onClick={() => fileInputRef.current?.click()}
+                        >
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".pdf,.png,.jpg,.jpeg,.webp"
+                            multiple
+                            className="hidden"
+                            onChange={handleFileSelect}
+                          />
+                          <svg className="mx-auto h-12 w-12 text-muted-foreground mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                          </svg>
+                          <p className="text-muted-foreground mb-1">Click to upload or drag and drop</p>
+                          <p className="text-sm text-muted-foreground">PNG, JPG, WEBP, PDF up to 20MB each</p>
+                        </div>
+
+                        {/* File list */}
+                        {files.length > 0 && (
+                          <div className="space-y-3">
+                            <h3 className="text-sm font-medium">Files ({files.length})</h3>
+                            <ul className="space-y-2">
+                              {files.map((file) => (
+                                <li key={file.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                                  <div className="flex items-center gap-3">
+                                    <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", file.isImage ? "bg-blue-100" : "bg-blue-100/70")}>
+                                      {file.isImage ? (
+                                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                        </svg>
+                                      ) : (
+                                        <FileIcon className="w-5 h-5 text-blue-600" />
+                                      )}
+                                    </div>
+                                    <div>
+                                      <p className="text-sm font-medium">{file.name}</p>
+                                      <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}{file.isImage && " • Label"}</p>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                    {file.status === "uploading" && (
+                                      <div className="flex items-center gap-2 text-blue-600">
+                                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                        </svg>
+                                        <span className="text-xs">Uploading...</span>
+                                      </div>
+                                    )}
+                                    {file.status === "ready" && <span className="text-xs text-blue-600 font-medium">Ready</span>}
+                                    {file.status === "error" && <span className="text-xs text-destructive">{file.error}</span>}
+                                    <button onClick={() => removeFile(file.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
+                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                                      </svg>
+                                    </button>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Optional notes */}
+                        {files.length > 0 && (
+                          <div>
+                            <label className="block text-sm font-medium mb-1">
+                              Additional Notes (Optional)
+                            </label>
+                            <textarea
+                              value={context.additionalNotes}
+                              onChange={(e) => setContext({ ...context, additionalNotes: e.target.value })}
+                              placeholder="Any specific concerns to check..."
+                              rows={2}
+                              className="w-full px-3 py-2 text-sm border rounded-lg bg-background placeholder-muted-foreground focus:ring-2 focus:ring-primary focus:border-primary resize-none"
+                            />
+                          </div>
+                        )}
+
+                        {/* Analyze button */}
+                        <div className="flex justify-end">
+                          <button
+                            onClick={handleAnalyze}
+                            disabled={!hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing}
+                            className={cn(
+                              "px-6 py-3 rounded-lg font-semibold transition-all",
+                              !hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing
+                                ? "bg-muted text-muted-foreground cursor-not-allowed"
+                                : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
+                            )}
+                          >
+                            {isAnalyzing ? (
+                              <span className="flex items-center gap-2">
+                                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                                </svg>
+                                Analyzing...
+                              </span>
+                            ) : (
+                              "Analyze Label"
+                            )}
+                          </button>
+                        </div>
+                      </CardContent>
+                      </Card>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
