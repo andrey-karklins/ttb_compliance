@@ -3,7 +3,7 @@
 import { v4 as uuidv4 } from "uuid";
 import type { ChatImage, ChatMessage, ComplianceReport } from "@/lib/schema";
 
-const CHAT_DB_KEY = "ttb_chat_db_v1";
+const CHAT_DB_KEY = "ttb_chat_db_v2";
 
 export type ChatSnapshot = {
   messages: ChatMessage[];
@@ -37,7 +37,7 @@ type StoredChat = {
 };
 
 type ChatDb = {
-  version: 1;
+  version: 2;
   users: Record<string, { chats: Record<string, StoredChat> }>;
 };
 
@@ -66,14 +66,14 @@ function getActiveUserId() {
 function loadChatDb(): ChatDb {
   try {
     const raw = localStorage.getItem(CHAT_DB_KEY);
-    if (!raw) return { version: 1, users: {} };
+    if (!raw) return { version: 2, users: {} };
     const parsed = JSON.parse(raw) as ChatDb;
-    if (!parsed || parsed.version !== 1 || typeof parsed.users !== "object") {
-      return { version: 1, users: {} };
+    if (!parsed || parsed.version !== 2 || typeof parsed.users !== "object") {
+      return { version: 2, users: {} };
     }
-    return { version: 1, users: parsed.users ?? {} };
+    return { version: 2, users: parsed.users ?? {} };
   } catch {
-    return { version: 1, users: {} };
+    return { version: 2, users: {} };
   }
 }
 

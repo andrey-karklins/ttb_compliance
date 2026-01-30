@@ -16,6 +16,7 @@ import type {
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -67,6 +68,8 @@ type KnowledgeDoc = {
   type: "pdf" | "md";
   lastUpdated: string;
   description: string;
+  fileName: string;
+  url: string;
 };
 
 const MOCK_PRODUCTS: Product[] = [
@@ -98,15 +101,96 @@ const MOCK_ACTIVITIES: Activity[] = [
 ];
 
 const MOCK_KNOWLEDGE_DOCS: KnowledgeDoc[] = [
-  { id: "DOC-001", name: "CFR Title 27 - Vol 1", category: "Regulations", type: "pdf", lastUpdated: "2025-01-01", description: "Code of Federal Regulations - Alcohol, Tobacco Products and Firearms" },
-  { id: "DOC-002", name: "CFR Title 27 - Vol 2", category: "Regulations", type: "pdf", lastUpdated: "2025-01-01", description: "Code of Federal Regulations - Continued" },
-  { id: "DOC-003", name: "CFR Title 27 - Vol 3", category: "Regulations", type: "pdf", lastUpdated: "2025-01-01", description: "Code of Federal Regulations - Continued" },
-  { id: "DOC-004", name: "TTB Labelling Guide 2022", category: "Guidance", type: "pdf", lastUpdated: "2022-06-15", description: "Comprehensive labeling requirements and best practices" },
-  { id: "DOC-005", name: "TTB Labelling Guide 2020", category: "Guidance", type: "pdf", lastUpdated: "2020-03-20", description: "Previous version of labeling guidance" },
-  { id: "DOC-006", name: "TTB Permit Requirements", category: "Permits", type: "pdf", lastUpdated: "2006-09-01", description: "Federal permit requirements for importers" },
-  { id: "DOC-007", name: "Alcohol Labeling FAQ", category: "FAQ", type: "md", lastUpdated: "2025-12-01", description: "Frequently asked questions about alcohol labeling" },
-  { id: "DOC-008", name: "Labeling FAQ", category: "FAQ", type: "md", lastUpdated: "2025-12-01", description: "General labeling questions and answers" },
-  { id: "DOC-009", name: "Other Compliance FAQ", category: "FAQ", type: "md", lastUpdated: "2025-12-01", description: "Miscellaneous compliance questions" },
+  {
+    id: "DOC-001",
+    name: "CFR Title 27 - Volume 1 (2025)",
+    category: "Regulations",
+    type: "pdf",
+    lastUpdated: "2025-04-01",
+    description: "Official CFR Vol 1 covering FAA Act permits, labeling, and alcohol regulations.",
+    fileName: "CFR-2025-title27-vol1.pdf",
+    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol1/pdf/CFR-2025-title27-vol1.pdf",
+  },
+  {
+    id: "DOC-002",
+    name: "CFR Title 27 - Volume 2 (2025)",
+    category: "Regulations",
+    type: "pdf",
+    lastUpdated: "2025-04-01",
+    description: "Official CFR Vol 2 covering tobacco product regulations and TTB procedures.",
+    fileName: "CFR-2025-title27-vol2.pdf",
+    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol2/pdf/CFR-2025-title27-vol2.pdf",
+  },
+  {
+    id: "DOC-003",
+    name: "CFR Title 27 - Volume 3 (2025)",
+    category: "Regulations",
+    type: "pdf",
+    lastUpdated: "2025-04-01",
+    description: "Official CFR Vol 3 covering ATF firearms, explosives, and related regulations.",
+    fileName: "CFR-2025-title27-vol3.pdf",
+    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol3/pdf/CFR-2025-title27-vol3.pdf",
+  },
+  {
+    id: "DOC-004",
+    name: "Distilled Spirits Labelling Guideline",
+    category: "Guidance",
+    type: "md",
+    lastUpdated: "2025-07-31",
+    description: "Checklist-style distilled spirits label rules compiled from TTB HTML guidance.",
+    fileName: "labelling_guideline.md",
+    url: "https://www.ttb.gov/regulated-commodities/beverage-alcohol/distilled-spirits/labeling#Mandatory",
+  },
+  {
+    id: "DOC-005",
+    name: "TTB Labeling Modernization Rule (2022)",
+    category: "Regulations",
+    type: "pdf",
+    lastUpdated: "2022-02-09",
+    description: "Final rule modernizing distilled spirits and malt beverage labeling/advertising.",
+    fileName: "ttb_labelling_2022.pdf",
+    url: "https://www.federalregister.gov/documents/2022/02/09/2022-00841/modernization-of-the-labeling-and-advertising-regulations-for-distilled-spirits-and-malt-beverages",
+  },
+  {
+    id: "DOC-006",
+    name: "TTB Permit Requirements (2006)",
+    category: "Permits",
+    type: "pdf",
+    lastUpdated: "2006-10-23",
+    description: "2006 snapshot of 27 CFR Part 1 basic permit requirements and related rules.",
+    fileName: "ttb_permit_requirements_2006.pdf",
+    url: "https://www.ecfr.gov/current/title-27/part-1",
+  },
+  {
+    id: "DOC-007",
+    name: "Alcohol FAQs",
+    category: "FAQ",
+    type: "md",
+    lastUpdated: "2011-08-01",
+    description: "General TTB alcohol FAQs covering permits, taxes, and compliance basics.",
+    fileName: "alcohol_faq.md",
+    url: "https://www.ttb.gov/faqs/alcohol",
+  },
+  {
+    id: "DOC-008",
+    name: "Advertising, Labeling & Formulation FAQs",
+    category: "FAQ",
+    type: "md",
+    lastUpdated: "2011-08-01",
+    description: "ALFD FAQs for label approvals, formulas, and labeling/advertising requirements.",
+    fileName: "labeling_faq.md",
+    url: "https://www.ttb.gov/faqs/alcohol-labeling-and-formulation",
+  },
+  {
+    id: "DOC-009",
+    name: "Other Compliance FAQs",
+    category: "FAQ",
+    type: "md",
+    lastUpdated: "2011-08-01",
+    description: "Additional TTB FAQs for compliance topics that sit outside labeling and taxes.",
+    fileName: "other_faq.md",
+    url: "https://www.ttb.gov/faqs",
+  },
 ];
 
 // ============================================================================
@@ -114,11 +198,11 @@ const MOCK_KNOWLEDGE_DOCS: KnowledgeDoc[] = [
 // ============================================================================
 
 const SESSION_KEY = "ttb_session_id";
-const CHAT_THREADS_KEY = "ttb_chat_threads_v1";
-const REPORT_THREADS_KEY = "ttb_report_threads_v1";
-const REPORT_HISTORY_KEY = "ttb_report_history_v1";
-const ACTIVE_CHAT_KEY = "ttb_active_chat_id_v1";
-const ACTIVE_REPORT_THREAD_KEY = "ttb_active_report_thread_id_v1";
+const CHAT_THREADS_KEY = "ttb_chat_threads_v2";
+const REPORT_THREADS_KEY = "ttb_report_threads_v2";
+const REPORT_HISTORY_KEY = "ttb_report_history_v2";
+const ACTIVE_CHAT_KEY = "ttb_active_chat_id_v2";
+const ACTIVE_REPORT_THREAD_KEY = "ttb_active_report_thread_id_v2";
 const UPLOAD_CONCURRENCY = 3;
 const DEFAULT_CHAT_TITLE = "New chat";
 
@@ -136,16 +220,6 @@ type ReportThread = {
   createdAt: string;
   updatedAt: string;
   reportId: string | null;
-};
-
-type LegacyThread = {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  kind?: "chat" | "report";
-  reportId?: string | null;
-  autoTitle?: boolean;
 };
 
 type ReportEntry = {
@@ -195,6 +269,8 @@ function deriveChatTitle(content: string): string {
 }
 
 function deriveReportTitle(report: ComplianceReport): string {
+  const contextSummary = report.inputs.context_summary?.trim();
+  if (contextSummary) return contextSummary;
   const labelName = report.inputs.label_files?.[0];
   if (labelName) return labelName;
   return `Report ${report.run_id.slice(0, 8)}`;
@@ -369,49 +445,24 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const storedChatsRaw = loadFromStorage<LegacyThread[]>(CHAT_THREADS_KEY, []);
-    const storedReportThreadsRaw = loadFromStorage<ReportThread[]>(REPORT_THREADS_KEY, []);
+    const storedChatThreads = loadFromStorage<ChatThread[]>(CHAT_THREADS_KEY, []);
+    const storedReportThreads = loadFromStorage<ReportThread[]>(REPORT_THREADS_KEY, []);
     const storedReports = loadFromStorage<ReportEntry[]>(REPORT_HISTORY_KEY, []);
 
-    const legacyReportThreads = storedChatsRaw.filter(
-      (thread) => thread.kind === "report" || Boolean(thread.reportId)
-    );
-    const legacyChatThreads = storedChatsRaw.filter(
-      (thread) =>
-        !thread.reportId &&
-        thread.kind !== "report" &&
-        !thread.autoTitle
-    );
-
-    const normalizedChatThreads: ChatThread[] = legacyChatThreads.map((thread) => ({
+    const normalizedChatThreads: ChatThread[] = storedChatThreads.map((thread) => ({
       id: thread.id,
       title: thread.title || DEFAULT_CHAT_TITLE,
       createdAt: thread.createdAt || new Date().toISOString(),
       updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
     }));
 
-    const normalizedLegacyReportThreads: ReportThread[] = legacyReportThreads.map((thread) => ({
+    const normalizedReportThreads: ReportThread[] = storedReportThreads.map((thread) => ({
       id: thread.id,
       title: thread.title || "Analyzing label...",
       createdAt: thread.createdAt || new Date().toISOString(),
       updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
       reportId: thread.reportId ?? null,
     }));
-
-    const normalizedStoredReportThreads: ReportThread[] = storedReportThreadsRaw.map((thread) => ({
-      id: thread.id,
-      title: thread.title || "Analyzing label...",
-      createdAt: thread.createdAt || new Date().toISOString(),
-      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
-      reportId: thread.reportId ?? null,
-    }));
-
-    const reportThreadsById = new Map<string, ReportThread>();
-    [...normalizedLegacyReportThreads, ...normalizedStoredReportThreads].forEach((thread) => {
-      if (!thread.id) return;
-      reportThreadsById.set(thread.id, thread);
-    });
-    const mergedReportThreads = Array.from(reportThreadsById.values());
 
     const storedActiveChatId = localStorage.getItem(ACTIVE_CHAT_KEY);
     const storedActiveReportThreadId = localStorage.getItem(ACTIVE_REPORT_THREAD_KEY);
@@ -419,7 +470,7 @@ export default function Home() {
     const sortedChats = [...normalizedChatThreads].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
-    const sortedReports = [...mergedReportThreads].sort(
+    const sortedReports = [...normalizedReportThreads].sort(
       (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
     );
 
@@ -430,12 +481,12 @@ export default function Home() {
 
     const nextActiveReportThreadId =
       storedActiveReportThreadId &&
-      mergedReportThreads.some((thread) => thread.id === storedActiveReportThreadId)
+      normalizedReportThreads.some((thread) => thread.id === storedActiveReportThreadId)
         ? storedActiveReportThreadId
         : sortedReports[0]?.id ?? "";
 
     setChatThreads(normalizedChatThreads);
-    setReportThreads(mergedReportThreads);
+    setReportThreads(normalizedReportThreads);
     setReportHistory(storedReports);
     setActiveChatId(nextActiveChatId);
     setActiveReportThreadId(nextActiveReportThreadId);
@@ -503,6 +554,10 @@ export default function Home() {
     activeReportEntry?.vectorStoreId ??
     (activeReportThread ? analysisJobs[activeReportThread.id]?.vectorStoreId : undefined) ??
     "";
+  const reportChatTitle =
+    activeReport?.inputs.context_summary?.trim() ||
+    activeReportThread?.title ||
+    "AI Compliance Assistant";
 
   const sortedChatThreads = useMemo(
     () =>
@@ -880,7 +935,11 @@ export default function Home() {
 
       const poll = async () => {
         try {
-          const response = await fetch(`/api/analyze?threadId=${encodeURIComponent(threadId)}`);
+          const query = new URLSearchParams({ threadId });
+          if (sessionId) {
+            query.set("sessionId", sessionId);
+          }
+          const response = await fetch(`/api/analyze?${query.toString()}`);
           if (response.status === 404) {
             handleAnalysisStatus(threadId, { status: "error", error: "Analysis not found. Please retry." });
             return;
@@ -898,7 +957,7 @@ export default function Home() {
       void poll();
       analysisPollersRef.current[threadId] = setInterval(poll, 2000);
     },
-    [handleAnalysisStatus]
+    [handleAnalysisStatus, sessionId]
   );
 
   const syncPendingAnalyses = useCallback(async () => {
@@ -915,7 +974,11 @@ export default function Home() {
       return next;
     });
 
-    const activeJobs = await fetch("/api/analyze?status=active")
+    const activeQuery = new URLSearchParams({ status: "active" });
+    if (sessionId) {
+      activeQuery.set("sessionId", sessionId);
+    }
+    const activeJobs = await fetch(`/api/analyze?${activeQuery.toString()}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((data) => (Array.isArray(data?.jobs) ? data.jobs : []))
       .catch(() => []);
@@ -933,7 +996,11 @@ export default function Home() {
         .filter((thread) => !activeIds.has(thread.id))
         .map(async (thread) => {
           try {
-            const response = await fetch(`/api/analyze?threadId=${encodeURIComponent(thread.id)}`);
+            const query = new URLSearchParams({ threadId: thread.id });
+            if (sessionId) {
+              query.set("sessionId", sessionId);
+            }
+            const response = await fetch(`/api/analyze?${query.toString()}`);
             if (response.status === 404) {
               handleAnalysisStatus(thread.id, {
                 status: "error",
@@ -952,7 +1019,7 @@ export default function Home() {
           }
         })
     );
-  }, [reportThreads, handleAnalysisStatus, startAnalysisPolling]);
+  }, [reportThreads, handleAnalysisStatus, startAnalysisPolling, sessionId]);
 
   const handleAnalyze = async () => {
     if (!hasReadyFiles || isAnalyzing || !vectorStoreId || !hasImages) {
@@ -994,6 +1061,7 @@ export default function Home() {
         }));
 
       const request: AnalyzeRequest = {
+        sessionId,
         threadId: newThreadId,
         vectorStoreId,
         context,
@@ -1056,6 +1124,10 @@ export default function Home() {
     setFocusFindingId(undefined);
   }, []);
 
+  const handleOpenDocUrl = useCallback((url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
   const formatFileSize = (bytes: number): string => {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -1081,10 +1153,22 @@ export default function Home() {
       const matchesSearch =
         !docSearchQuery ||
         doc.name.toLowerCase().includes(docSearchQuery.toLowerCase()) ||
-        doc.description.toLowerCase().includes(docSearchQuery.toLowerCase());
+        doc.description.toLowerCase().includes(docSearchQuery.toLowerCase()) ||
+        doc.fileName.toLowerCase().includes(docSearchQuery.toLowerCase());
       return matchesCategory && matchesSearch;
     });
   }, [docCategoryFilter, docSearchQuery]);
+
+  const knowledgebaseStats = useMemo(() => {
+    const timestamps = MOCK_KNOWLEDGE_DOCS
+      .map((doc) => Date.parse(doc.lastUpdated))
+      .filter((value) => !Number.isNaN(value));
+    const latestTimestamp = timestamps.length ? Math.max(...timestamps) : undefined;
+    return {
+      total: MOCK_KNOWLEDGE_DOCS.length,
+      latest: latestTimestamp ? new Date(latestTimestamp).toISOString().slice(0, 10) : "—",
+    };
+  }, []);
 
   // KPI calculations
   const kpiData = useMemo(() => {
@@ -1568,11 +1652,19 @@ export default function Home() {
                                   ? "bg-red-500"
                                   : "bg-blue-500";
                               return (
-                                <button
+                                <div
                                   key={thread.id}
+                                  role="button"
+                                  tabIndex={0}
                                   onClick={() => handleSelectReportThread(thread.id)}
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter" || event.key === " ") {
+                                      event.preventDefault();
+                                      handleSelectReportThread(thread.id);
+                                    }
+                                  }}
                                   className={cn(
-                                    "w-full min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden",
+                                    "w-full min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden cursor-pointer",
                                     isActive
                                       ? "border-blue-500/30 bg-blue-50"
                                       : "border-transparent hover:bg-muted"
@@ -1615,7 +1707,7 @@ export default function Home() {
                                       </span>
                                     )}
                                   </div>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -1639,7 +1731,7 @@ export default function Home() {
                             focusFindingId={focusFindingId}
                             onClearFocus={handleClearFocus}
                             onChatActivity={handleReportChatActivity}
-                            title="AI Compliance Assistant"
+                            title={reportChatTitle}
                             subtitle="Ask questions about your compliance report"
                           />
                         </Card>
@@ -1658,15 +1750,15 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    <div className="h-full flex justify-center">
-                      <Card className="h-full w-full max-w-3xl">
-                      <CardHeader>
-                        <CardTitle>Upload Label Assets</CardTitle>
-                        <CardDescription>
-                          Drop label images (PNG, JPG, WebP) and optional supporting PDFs. Include front/back labels for best results.
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-6">
+                    <div className="flex justify-center items-start">
+                      <Card className="w-full max-w-3xl">
+                        <CardHeader>
+                          <CardTitle>Upload Label Assets</CardTitle>
+                          <CardDescription>
+                            Drop label images (PNG, JPG, WebP) and optional supporting PDFs. Include front/back labels for best results.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-6">
                         {/* Upload area */}
                         <div
                           className="border-2 border-dashed border-muted rounded-xl p-8 text-center hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-colors"
@@ -1790,7 +1882,16 @@ export default function Home() {
             <div className="p-6 space-y-6">
               <div>
                 <h2 className="text-2xl font-bold text-foreground">TTB Knowledgebase</h2>
-                <p className="text-muted-foreground">Compliance documents and regulatory guidance</p>
+                <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <FileIcon className="w-3.5 h-3.5" />
+                    {knowledgebaseStats.total} docs
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <ClockIcon className="w-3.5 h-3.5" />
+                    Latest update {knowledgebaseStats.latest}
+                  </span>
+                </div>
               </div>
 
               {/* Filters */}
@@ -1821,8 +1922,20 @@ export default function Home() {
               {/* Documents Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {filteredDocs.map((doc) => (
-                  <Card key={doc.id} className="hover:shadow-md transition-shadow cursor-pointer">
-                    <CardHeader className="pb-3">
+                  <Card
+                    key={doc.id}
+                    className="hover:shadow-md transition-shadow cursor-pointer focus-visible:ring-2 focus-visible:ring-primary/40"
+                    role="link"
+                    tabIndex={0}
+                    onClick={() => handleOpenDocUrl(doc.url)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleOpenDocUrl(doc.url);
+                      }
+                    }}
+                  >
+                    <CardHeader className="pb-2">
                       <div className="flex items-start gap-3">
                         <div className={cn(
                           "w-10 h-10 rounded-lg flex items-center justify-center shrink-0",
@@ -1833,19 +1946,32 @@ export default function Home() {
                             doc.type === "pdf" ? "text-red-600" : "text-blue-600"
                           )} />
                         </div>
-                        <div className="min-w-0">
+                        <div className="min-w-0 space-y-1">
                           <CardTitle className="text-sm truncate">{doc.name}</CardTitle>
-                          <CardDescription className="text-xs">{doc.category}</CardDescription>
+                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                            <Badge variant="outline" className="text-[10px]">
+                              {doc.category}
+                            </Badge>
+                            <span className="truncate">{doc.fileName}</span>
+                          </div>
                         </div>
                       </div>
                     </CardHeader>
-                    <CardContent>
-                      <p className="text-sm text-muted-foreground line-clamp-2 mb-3">{doc.description}</p>
-                      <div className="flex items-center justify-between">
-                        <Badge variant="outline" className="text-[10px]">
-                          {doc.type.toUpperCase()}
-                        </Badge>
-                        <span className="text-xs text-muted-foreground">Updated {doc.lastUpdated}</span>
+                    <CardContent className="pt-0">
+                      <p className="text-xs text-muted-foreground line-clamp-2">{doc.description}</p>
+                      <div className="mt-3 flex items-center justify-between">
+                        <span className="text-[11px] text-muted-foreground">Updated {doc.lastUpdated}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleOpenDocUrl(doc.url);
+                          }}
+                        >
+                          Open online
+                        </Button>
                       </div>
                     </CardContent>
                   </Card>

@@ -17,8 +17,15 @@ function buildCookieHeader(userId: string) {
   return parts.join("; ");
 }
 
-function getOrCreateUserId(request: NextRequest) {
+function getOrCreateUserId(request: NextRequest, explicitId?: string | null) {
   const existing = request.cookies.get(COOKIE_NAME)?.value;
+  const normalized = explicitId?.trim();
+  if (normalized) {
+    if (!existing || existing !== normalized) {
+      return { userId: normalized, setCookieHeader: buildCookieHeader(normalized) };
+    }
+    return { userId: normalized, setCookieHeader: null as string | null };
+  }
   if (existing) {
     return { userId: existing, setCookieHeader: null as string | null };
   }
@@ -27,8 +34,9 @@ function getOrCreateUserId(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const { userId, setCookieHeader } = getOrCreateUserId(request);
   const { searchParams } = new URL(request.url);
+  const sessionId = searchParams.get("sessionId");
+  const { userId, setCookieHeader } = getOrCreateUserId(request, sessionId);
   const threadId = searchParams.get("threadId");
   const status = searchParams.get("status");
 
@@ -58,7 +66,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { threadId, vectorStoreId, context, images, readyFileNames } = body ?? {};
+    const { threadId, vectorStoreId, context, images, readyFileNames, sessionId } = body ?? {};
 
     if (!threadId || typeof threadId !== "string") {
       return NextResponse.json({ error: "threadId is required" }, { status: 400 });
@@ -82,7 +90,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Context is required" }, { status: 400 });
     }
 
-    const { userId, setCookieHeader } = getOrCreateUserId(request);
+    const { userId, setCookieHeader } = getOrCreateUserId(request, sessionId);
     const job = startAnalysisJob({
       userId,
       threadId,

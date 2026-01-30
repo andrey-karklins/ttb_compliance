@@ -25,6 +25,7 @@ export function ReportWorkspace({
   const [activeTab, setActiveTab] = useState<Tab>("report");
   const [focusFindingId, setFocusFindingId] = useState<string | undefined>();
   const reportRef = useRef<HTMLDivElement>(null);
+  const chatTitle = report?.inputs.context_summary?.trim();
 
   // Handle "Ask about this" from finding cards
   const handleAskAboutFinding = useCallback((findingId: string) => {
@@ -151,6 +152,7 @@ export function ReportWorkspace({
               onJumpToFinding={handleJumpToFinding}
               focusFindingId={focusFindingId}
               onClearFocus={handleClearFocus}
+              title={chatTitle || undefined}
             />
           </div>
         </div>

@@ -115,6 +115,24 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
         <div className="px-4 pb-4 pt-3 border-t border-gray-200">
           <CardContent className="p-0">
             <div className="space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                    Regulation
+                  </h5>
+                  <p className="text-sm text-gray-800 bg-gray-50 p-2 rounded-md border border-gray-200 font-mono">
+                    {finding.regulation}
+                  </p>
+                </div>
+                <div>
+                  <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                    Source
+                  </h5>
+                  <p className="text-sm text-gray-800 bg-gray-50 p-2 rounded-md border border-gray-200 font-mono">
+                    {finding.source}
+                  </p>
+                </div>
+              </div>
               <div>
                 <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
                   Requirement

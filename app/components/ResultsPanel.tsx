@@ -111,6 +111,20 @@ export function ResultsPanel({ report, isLoading, error, onAskAboutFinding }: Re
     (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]
   );
 
+  const limitations = [
+    ...report.limitations.missing_inputs,
+    ...report.limitations.unverified,
+    ...report.limitations.scope_notes,
+  ];
+
+  const inputSections = [
+    { key: "labels", label: "Label files", items: report.inputs.label_files },
+    { key: "docs", label: "Reference documents", items: report.inputs.document_files },
+  ];
+  const contextSummary = report.inputs.context_summary?.trim();
+  const hasInputs =
+    inputSections.some((section) => section.items.length > 0) || Boolean(contextSummary);
+
   const downloadReport = () => {
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -181,17 +195,41 @@ export function ResultsPanel({ report, isLoading, error, onAskAboutFinding }: Re
         </div>
       </div>
 
-      {/* Limitations */}
-      {report.limitations.length > 0 && (
-        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-          <h4 className="text-sm font-semibold text-blue-800 mb-1">
-            Limitations
-          </h4>
-          <ul className="text-sm text-blue-700 list-disc list-inside">
-            {report.limitations.map((lim, idx) => (
-              <li key={idx}>{lim}</li>
+      {/* Inputs */}
+      {hasInputs && (
+        <div className="space-y-3">
+          <h4 className="text-sm font-semibold text-gray-800">Inputs</h4>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {inputSections.map((section) => (
+              <div
+                key={section.key}
+                className="rounded-lg border border-gray-200 bg-gray-50/80 p-3"
+              >
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  {section.label}
+                </div>
+                {section.items.length > 0 ? (
+                  <ul className="text-sm text-gray-700 list-disc list-inside space-y-1">
+                    {section.items.map((item) => (
+                      <li key={item} className="wrap-break-word">
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-gray-500">None provided.</p>
+                )}
+              </div>
             ))}
-          </ul>
+            {contextSummary && (
+              <div className="rounded-lg border border-gray-200 bg-gray-50/80 p-3">
+                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                  Context summary
+                </div>
+                <p className="text-sm text-gray-700">{contextSummary}</p>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -241,6 +279,20 @@ export function ResultsPanel({ report, isLoading, error, onAskAboutFinding }: Re
           </div>
         )}
       </div>
+
+      {/* Limitations */}
+      {limitations.length > 0 && (
+        <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
+          <h4 className="text-sm font-semibold text-blue-800 mb-1">
+            Limitations
+          </h4>
+          <ul className="text-sm text-blue-700 list-disc list-inside space-y-1">
+            {limitations.map((limitation, idx) => (
+              <li key={`${limitation}-${idx}`}>{limitation}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </motion.div>
   );
 }

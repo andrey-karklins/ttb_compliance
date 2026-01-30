@@ -46,6 +46,8 @@ If you cannot retrieve support for a claim, mark it as:
 - “UNVERIFIED (needs retrieval)”
 and provide a suggested query.
 
+If any label text is unclear, partially visible, or not recognized by the model, call it out explicitly in limitations (missing_inputs) and note that a clearer image or exact text is needed.
+
 ### How to query the vector store (recommended pattern)
 1) Start broad with the label element name + “distilled spirits”:
    - “distilled spirits mandatory information brand name same field of vision”
@@ -115,17 +117,21 @@ You MUST output JSON that matches the provided schema (no extra keys).
 
 Top-level keys:
 - \`findings\`: array of finding objects
-- \`limitations\`: array of strings
+- \`limitations\`: structured object with \`missing_inputs\`, \`unverified\`, \`scope_notes\` arrays
 
 Each finding object MUST include:
 - \`id\`: "F-001", "F-002", etc.
 - \`severity\`: one of "blocker" | "major" | "minor" | "info"
 - \`title\`: short (5–10 words)
 - \`issue\`: 1–2 sentences describing what’s wrong on the label
-- \`regulation\`: Prefer a CFR citation (e.g., "27 CFR 5.42(b)(1)"). If the rule is from guidance/FAQ rather than CFR, write "TTB guidance (see source)" and ensure \`source\` is correct.
+- \`regulation\`: CFR citation only (e.g., "27 CFR 5.70(a)"). Do not include extra words or guidance labels.
 - \`requirement\`: 1 sentence describing the requirement, and include a short **verbatim quote** in quotation marks when possible.
 - \`fix\`: 1 sentence with the specific label edit required (exact wording if applicable)
 - \`source\`: filename from the vector store (e.g., "CFR-2025-title27-vol1.pdf", "labelling_guideline.md")
 
-In \`limitations\`, list missing inputs and any “UNVERIFIED (needs retrieval)” items you could not confidently support with retrieved text.`;
+Limitations must be structured as an object with these keys:
+- \`missing_inputs\`: list of missing inputs needed to evaluate a requirement
+- \`unverified\`: list of “UNVERIFIED (needs retrieval)” items you could not support with retrieved text, include a suggested query
+- \`scope_notes\`: list of scope/assumption notes (e.g., out-of-scope topics)
+Return empty arrays when none apply.`;
 

@@ -56,6 +56,14 @@ export const InputsSchema = z.object({
 });
 export type Inputs = z.infer<typeof InputsSchema>;
 
+// Limitations - structured for clear reporting
+export const LimitationsSchema = z.object({
+  missing_inputs: z.array(z.string()),
+  unverified: z.array(z.string()),
+  scope_notes: z.array(z.string()),
+});
+export type Limitations = z.infer<typeof LimitationsSchema>;
+
 // Full compliance report
 export const ComplianceReportSchema = z.object({
   run_id: z.string(),
@@ -63,7 +71,7 @@ export const ComplianceReportSchema = z.object({
   inputs: InputsSchema,
   summary: SummarySchema,
   findings: z.array(FindingSchema),
-  limitations: z.array(z.string()),
+  limitations: LimitationsSchema,
 });
 export type ComplianceReport = z.infer<typeof ComplianceReportSchema>;
 
@@ -91,7 +99,8 @@ export const COMPLIANCE_REPORT_JSON_SCHEMA = {
           issue: { type: "string", description: "What's wrong (1-2 sentences)" },
           regulation: {
             type: "string",
-            description: "CFR citation, e.g. '27 CFR 4.32(a)' or '27 CFR 5.42(b)(1)'",
+            description: "CFR citation only, e.g. '27 CFR 5.70(a)'",
+            pattern: "^27 CFR \\d+\\.\\d+[a-z0-9]*(\\([a-z0-9]+\\))*$",
           },
           requirement: { type: "string", description: "What the regulation requires (1 sentence)" },
           fix: { type: "string", description: "How to fix (1 sentence)" },
@@ -105,8 +114,14 @@ export const COMPLIANCE_REPORT_JSON_SCHEMA = {
       },
     },
     limitations: {
-      type: "array",
-      items: { type: "string" },
+      type: "object",
+      properties: {
+        missing_inputs: { type: "array", items: { type: "string" } },
+        unverified: { type: "array", items: { type: "string" } },
+        scope_notes: { type: "array", items: { type: "string" } },
+      },
+      required: ["missing_inputs", "unverified", "scope_notes"],
+      additionalProperties: false,
     },
   },
   required: ["findings", "limitations"],
@@ -187,6 +202,7 @@ export interface AnalysisImage {
  * Analysis request payload
  */
 export interface AnalyzeRequest {
+  sessionId?: string;
   threadId: string;
   vectorStoreId: string;
   context: ContextFormData;
