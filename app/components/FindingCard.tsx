@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion } from "framer-motion";
 import type { Finding } from "@/lib/schema";
 import { SEVERITY_COLORS } from "@/lib/schema";
+import { getCfrUrl, isValidCfrCitation } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
@@ -58,9 +59,34 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                   <span className="font-mono">{finding.id}</span>
                   <span className="h-1 w-1 rounded-full bg-gray-300" />
-                  <Badge variant="outline" className="font-mono text-gray-600">
-                    {finding.regulation}
-                  </Badge>
+                  {isValidCfrCitation(finding.regulation) ? (
+                    <a
+                      href={getCfrUrl(finding.regulation) || "#"}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 hover:text-blue-900 font-mono text-xs transition-colors"
+                    >
+                      {finding.regulation}
+                      <svg
+                        className="w-3 h-3"
+                        fill="none"
+                        stroke="currentColor"
+                        viewBox="0 0 24 24"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"
+                        />
+                      </svg>
+                    </a>
+                  ) : (
+                    <Badge variant="outline" className="font-mono text-gray-600">
+                      {finding.regulation}
+                    </Badge>
+                  )}
                 </div>
               </div>
               {onAskAboutFinding && (
@@ -115,24 +141,6 @@ export function FindingCard({ finding, onAskAboutFinding }: FindingCardProps) {
         <div className="px-4 pb-4 pt-3 border-t border-gray-200">
           <CardContent className="p-0">
             <div className="space-y-3">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                    Regulation
-                  </h5>
-                  <p className="text-sm text-gray-800 bg-gray-50 p-2 rounded-md border border-gray-200 font-mono">
-                    {finding.regulation}
-                  </p>
-                </div>
-                <div>
-                  <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
-                    Source
-                  </h5>
-                  <p className="text-sm text-gray-800 bg-gray-50 p-2 rounded-md border border-gray-200 font-mono">
-                    {finding.source}
-                  </p>
-                </div>
-              </div>
               <div>
                 <h5 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">
                   Requirement

@@ -62,10 +62,12 @@ If required user input is missing, add it to \`missing_inputs\`. If images are b
 and cite those chunks.
 
 ### Citation requirements (strict)
-For each finding, include:
-- Source: {doc filename}
-- Quote: “exact supporting text” (short, relevant)
-- Why it applies: 1 sentence tying the rule to the label fact
+For each finding, you must retrieve the exact CFR section from the vector store documents.
+The \`source\` field must contain:
+- A precise CFR citation in the format "27 CFR X.Y" (e.g., "27 CFR 5.65")
+- May include subparts if specific (e.g., "27 CFR 5.65(a)" or "27 CFR 5.65(a)(1)")
+- Use "None" ONLY if the finding is based on general guidance without a specific CFR section
+- **Never use document filenames** - always extract the actual CFR section number from the retrieved text
 
 ## Distilled spirits labeling checks (execute in this order)
 
@@ -121,11 +123,11 @@ Each finding object MUST include:
 - \`id\`: "F-001", "F-002", etc.
 - \`severity\`: one of "blocker" | "major" | "minor" | "info"
 - \`title\`: short (5–10 words)
-- \`issue\`: 1–2 sentences describing what’s wrong on the label
+- \`issue\`: 1–2 sentences describing what's wrong on the label
 - \`regulation\`: CFR citation only (e.g., "27 CFR 5.70(a)"). Do not include extra words or guidance labels.
 - \`requirement\`: 1 sentence describing the requirement, and include a short **verbatim quote** in quotation marks when possible.
 - \`fix\`: 1 sentence with the specific label edit required (exact wording if applicable)
-- \`source\`: filename from the vector store (e.g., "CFR-2025-title27-vol1.pdf", "labelling_guideline.md")
+- \`source\`: CFR citation in format "27 CFR X.Y" (e.g., "27 CFR 5.65"), optionally with subparts (e.g., "27 CFR 5.65(a)(1)"). Extract the actual CFR section from the retrieved text. Use "None" only if no specific CFR section applies.
 
 Limitations must be structured as an object with these keys (max 5 items total across all three):
 - \`missing_inputs\`: Required information not provided (e.g., "ABV/proof value not specified", "Producer address not provided")

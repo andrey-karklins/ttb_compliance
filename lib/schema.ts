@@ -34,7 +34,7 @@ export const FindingSchema = z.object({
   regulation: z.string(), // CFR citation like "27 CFR 4.32(a)"
   requirement: z.string(),
   fix: z.string(),
-  source: z.string(), // Filename of source document
+  source: z.string(), // CFR citation (e.g., "27 CFR 5.65") or "None"
 });
 export type Finding = z.infer<typeof FindingSchema>;
 
@@ -106,7 +106,8 @@ export const COMPLIANCE_REPORT_JSON_SCHEMA = {
           fix: { type: "string", description: "How to fix (1 sentence)" },
           source: {
             type: "string",
-            description: "Filename of the source document (e.g., 'CFR-2025-title27-vol1.pdf')",
+            description: "CFR citation in format '27 CFR X.Y' (e.g., '27 CFR 5.65'), optionally with subparts like '27 CFR 5.65(a)(1)'. Use 'None' if no specific CFR section applies.",
+            pattern: "^(None|27 CFR \\d+\\.\\d+(\\([a-z0-9]+\\))*)$",
           },
         },
         required: ["id", "severity", "title", "issue", "regulation", "requirement", "fix", "source"],
