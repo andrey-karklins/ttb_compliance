@@ -8,7 +8,7 @@ import { ChatPanel } from "./ChatPanel";
 import { ResultsPanel } from "./ResultsPanel";
 import { FileIcon, formatShortDate, formatFileSize } from "@/lib/mockData";
 import type { ComplianceReport, UploadedFile, ContextFormData } from "@/lib/schema";
-import type { ReportThread, AnalysisJobState } from "@/lib/mockData";
+import type { ReportThread, AnalysisJobState, NavItem } from "@/lib/mockData";
 
 interface ComplianceSectionProps {
   // Report threads
@@ -43,7 +43,7 @@ interface ComplianceSectionProps {
   onJumpToFinding: (findingId: string) => void;
   onClearFocus: () => void;
   onReportChatActivity: (threadId: string, content: string) => void;
-  onSetActiveNav: (nav: string) => void;
+  onSetActiveNav: (nav: NavItem) => void;
 }
 
 export function ComplianceSection({
