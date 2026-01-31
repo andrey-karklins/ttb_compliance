@@ -59,8 +59,8 @@ export type Inputs = z.infer<typeof InputsSchema>;
 // Limitations - structured for clear reporting
 export const LimitationsSchema = z.object({
   missing_inputs: z.array(z.string()),
-  unverified: z.array(z.string()),
-  scope_notes: z.array(z.string()),
+  cant_read: z.array(z.string()),
+  assumptions: z.array(z.string()),
 });
 export type Limitations = z.infer<typeof LimitationsSchema>;
 
@@ -116,11 +116,23 @@ export const COMPLIANCE_REPORT_JSON_SCHEMA = {
     limitations: {
       type: "object",
       properties: {
-        missing_inputs: { type: "array", items: { type: "string" } },
-        unverified: { type: "array", items: { type: "string" } },
-        scope_notes: { type: "array", items: { type: "string" } },
+        missing_inputs: {
+          type: "array",
+          items: { type: "string" },
+          description: "Required information not provided. Keep each under 15 words.",
+        },
+        cant_read: {
+          type: "array",
+          items: { type: "string" },
+          description: "Image quality or readability issues preventing analysis. Keep each under 15 words.",
+        },
+        assumptions: {
+          type: "array",
+          items: { type: "string" },
+          description: "Assumptions made during analysis. Keep each under 15 words.",
+        },
       },
-      required: ["missing_inputs", "unverified", "scope_notes"],
+      required: ["missing_inputs", "cant_read", "assumptions"],
       additionalProperties: false,
     },
   },

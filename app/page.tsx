@@ -1,1199 +1,45 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { v4 as uuidv4 } from "uuid";
-import { ChatPanel } from "./components/ChatPanel";
-import { ResultsPanel } from "./components/ResultsPanel";
-import { clearChatMemory, setChatUserId } from "../lib/chatStore";
-import type {
-  UploadedFile,
-  ContextFormData,
-  ComplianceReport,
-  AnalyzeRequest,
-  UploadResponse,
-  AnalysisImage,
-} from "@/lib/schema";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-
-// ============================================================================
-// MOCKED DATA
-// ============================================================================
-
-type NavItem = "dashboard" | "products" | "pilot" | "compliance" | "knowledgebase";
-
-type Product = {
-  id: string;
-  name: string;
-  category: string;
-  market: string;
-  status: "approved" | "in_review" | "blocked" | "pending";
-  stage: string;
-  daysInStage: number;
-  owner: string;
-  ownerInitials: string;
-  lastUpdated: string;
-};
-
-type Blocker = {
-  id: string;
-  productName: string;
-  issue: string;
-  severity: "critical" | "high" | "medium";
-  owner: string;
-  ownerInitials: string;
-  daysOpen: number;
-};
-
-type Activity = {
-  id: string;
-  action: string;
-  product: string;
-  user: string;
-  timestamp: string;
-};
-
-type KnowledgeDoc = {
-  id: string;
-  name: string;
-  category: string;
-  type: "pdf" | "md";
-  lastUpdated: string;
-  description: string;
-  fileName: string;
-  url: string;
-};
-
-const MOCK_PRODUCTS: Product[] = [
-  { id: "PRD-001", name: "KHOR Platinum Vodka 1L", category: "Vodka", market: "USA", status: "approved", stage: "Complete", daysInStage: 0, owner: "Sarah Chen", ownerInitials: "SC", lastUpdated: "2026-01-15" },
-  { id: "PRD-002", name: "KHOR ICE Vodka 750ml", category: "Vodka", market: "USA", status: "approved", stage: "Complete", daysInStage: 0, owner: "Sarah Chen", ownerInitials: "SC", lastUpdated: "2026-01-10" },
-  { id: "PRD-003", name: "KHOR DE LUXE Vodka 750ml", category: "Vodka", market: "USA", status: "in_review", stage: "COLA/Labeling", daysInStage: 8, owner: "Mike Torres", ownerInitials: "MT", lastUpdated: "2026-01-24" },
-  { id: "PRD-004", name: "KROL Potato Vodka 750ml", category: "Vodka", market: "USA", status: "in_review", stage: "Import/Customs", daysInStage: 5, owner: "James Wilson", ownerInitials: "JW", lastUpdated: "2026-01-27" },
-  { id: "PRD-005", name: "Odessa VSOP Brandy 750ml", category: "Brandy", market: "USA", status: "approved", stage: "Complete", daysInStage: 0, owner: "Lisa Park", ownerInitials: "LP", lastUpdated: "2026-01-12" },
-  { id: "PRD-006", name: "Por La Gente Tequila Blanco", category: "Tequila", market: "USA", status: "in_review", stage: "COLA/Labeling", daysInStage: 12, owner: "Sarah Chen", ownerInitials: "SC", lastUpdated: "2026-01-25" },
-  { id: "PRD-007", name: "Por La Gente Tequila Reposado", category: "Tequila", market: "USA", status: "blocked", stage: "Formula Approval", daysInStage: 28, owner: "Mike Torres", ownerInitials: "MT", lastUpdated: "2026-01-20" },
-  { id: "PRD-008", name: "Por La Gente Tequila Añejo", category: "Tequila", market: "USA", status: "pending", stage: "State Approvals", daysInStage: 3, owner: "Lisa Park", ownerInitials: "LP", lastUpdated: "2026-01-26" },
-  { id: "PRD-009", name: "Cumberland Falls Bourbon", category: "Bourbon", market: "USA", status: "in_review", stage: "COLA/Labeling", daysInStage: 15, owner: "James Wilson", ownerInitials: "JW", lastUpdated: "2026-01-22" },
-  { id: "PRD-010", name: "Ameris Gin Original Mediterranean Recipe", category: "Gin", market: "USA", status: "pending", stage: "Formula Approval", daysInStage: 2, owner: "Sarah Chen", ownerInitials: "SC", lastUpdated: "2026-01-27" },
-  { id: "PRD-011", name: "Ameris Gin Italian Citrus Recipe", category: "Gin", market: "USA", status: "pending", stage: "Formula Approval", daysInStage: 2, owner: "Sarah Chen", ownerInitials: "SC", lastUpdated: "2026-01-27" },
-];
-
-const MOCK_BLOCKERS: Blocker[] = [
-  { id: "BLK-001", productName: "Por La Gente Tequila Reposado", issue: "Missing agave source documentation", severity: "critical", owner: "Mike Torres", ownerInitials: "MT", daysOpen: 14 },
-  { id: "BLK-002", productName: "Cumberland Falls Bourbon", issue: "Mashbill percentage verification pending", severity: "high", owner: "James Wilson", ownerInitials: "JW", daysOpen: 8 },
-  { id: "BLK-003", productName: "KHOR DE LUXE Vodka 750ml", issue: "Country of origin labeling clarification", severity: "medium", owner: "Mike Torres", ownerInitials: "MT", daysOpen: 3 },
-];
-
-const MOCK_ACTIVITIES: Activity[] = [
-  { id: "ACT-001", action: "Submitted for COLA review", product: "KROL Potato Vodka 750ml", user: "James Wilson", timestamp: "2026-01-28T09:30:00Z" },
-  { id: "ACT-002", action: "Label revision uploaded", product: "Por La Gente Tequila Blanco", user: "Sarah Chen", timestamp: "2026-01-28T08:15:00Z" },
-  { id: "ACT-003", action: "Formula submitted", product: "Ameris Gin Original Mediterranean Recipe", user: "Sarah Chen", timestamp: "2026-01-27T16:45:00Z" },
-  { id: "ACT-004", action: "COLA approved", product: "KHOR Platinum Vodka 1L", user: "System", timestamp: "2026-01-27T14:20:00Z" },
-  { id: "ACT-005", action: "State approval received (NY)", product: "Odessa VSOP Brandy 750ml", user: "System", timestamp: "2026-01-27T11:00:00Z" },
-];
-
-const MOCK_KNOWLEDGE_DOCS: KnowledgeDoc[] = [
-  {
-    id: "DOC-001",
-    name: "CFR Title 27 - Volume 1 (2025)",
-    category: "Regulations",
-    type: "pdf",
-    lastUpdated: "2025-04-01",
-    description: "Official CFR Vol 1 covering FAA Act permits, labeling, and alcohol regulations.",
-    fileName: "CFR-2025-title27-vol1.pdf",
-    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol1/pdf/CFR-2025-title27-vol1.pdf",
-  },
-  {
-    id: "DOC-002",
-    name: "CFR Title 27 - Volume 2 (2025)",
-    category: "Regulations",
-    type: "pdf",
-    lastUpdated: "2025-04-01",
-    description: "Official CFR Vol 2 covering tobacco product regulations and TTB procedures.",
-    fileName: "CFR-2025-title27-vol2.pdf",
-    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol2/pdf/CFR-2025-title27-vol2.pdf",
-  },
-  {
-    id: "DOC-003",
-    name: "CFR Title 27 - Volume 3 (2025)",
-    category: "Regulations",
-    type: "pdf",
-    lastUpdated: "2025-04-01",
-    description: "Official CFR Vol 3 covering ATF firearms, explosives, and related regulations.",
-    fileName: "CFR-2025-title27-vol3.pdf",
-    url: "https://www.govinfo.gov/content/pkg/CFR-2025-title27-vol3/pdf/CFR-2025-title27-vol3.pdf",
-  },
-  {
-    id: "DOC-004",
-    name: "Distilled Spirits Labelling Guideline",
-    category: "Guidance",
-    type: "md",
-    lastUpdated: "2025-07-31",
-    description: "Checklist-style distilled spirits label rules compiled from TTB HTML guidance.",
-    fileName: "labelling_guideline.md",
-    url: "https://www.ttb.gov/regulated-commodities/beverage-alcohol/distilled-spirits/labeling#Mandatory",
-  },
-  {
-    id: "DOC-005",
-    name: "TTB Labeling Modernization Rule (2022)",
-    category: "Regulations",
-    type: "pdf",
-    lastUpdated: "2022-02-09",
-    description: "Final rule modernizing distilled spirits and malt beverage labeling/advertising.",
-    fileName: "ttb_labelling_2022.pdf",
-    url: "https://www.federalregister.gov/documents/2022/02/09/2022-00841/modernization-of-the-labeling-and-advertising-regulations-for-distilled-spirits-and-malt-beverages",
-  },
-  {
-    id: "DOC-006",
-    name: "TTB Permit Requirements (2006)",
-    category: "Permits",
-    type: "pdf",
-    lastUpdated: "2006-10-23",
-    description: "2006 snapshot of 27 CFR Part 1 basic permit requirements and related rules.",
-    fileName: "ttb_permit_requirements_2006.pdf",
-    url: "https://www.ecfr.gov/current/title-27/part-1",
-  },
-  {
-    id: "DOC-007",
-    name: "Alcohol FAQs",
-    category: "FAQ",
-    type: "md",
-    lastUpdated: "2011-08-01",
-    description: "General TTB alcohol FAQs covering permits, taxes, and compliance basics.",
-    fileName: "alcohol_faq.md",
-    url: "https://www.ttb.gov/faqs/alcohol",
-  },
-  {
-    id: "DOC-008",
-    name: "Advertising, Labeling & Formulation FAQs",
-    category: "FAQ",
-    type: "md",
-    lastUpdated: "2011-08-01",
-    description: "ALFD FAQs for label approvals, formulas, and labeling/advertising requirements.",
-    fileName: "labeling_faq.md",
-    url: "https://www.ttb.gov/faqs/alcohol-labeling-and-formulation",
-  },
-  {
-    id: "DOC-009",
-    name: "Other Compliance FAQs",
-    category: "FAQ",
-    type: "md",
-    lastUpdated: "2011-08-01",
-    description: "Additional TTB FAQs for compliance topics that sit outside labeling and taxes.",
-    fileName: "other_faq.md",
-    url: "https://www.ttb.gov/faqs",
-  },
-];
-
-// ============================================================================
-// CONSTANTS & HELPERS
-// ============================================================================
-
-const SESSION_KEY = "ttb_session_id";
-const CHAT_THREADS_KEY = "ttb_chat_threads_v2";
-const REPORT_THREADS_KEY = "ttb_report_threads_v2";
-const REPORT_HISTORY_KEY = "ttb_report_history_v2";
-const ACTIVE_CHAT_KEY = "ttb_active_chat_id_v2";
-const ACTIVE_REPORT_THREAD_KEY = "ttb_active_report_thread_id_v2";
-const UPLOAD_CONCURRENCY = 3;
-const DEFAULT_CHAT_TITLE = "New chat";
-
-type ChatThread = {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  autoTitle?: boolean;
-};
-
-type ReportThread = {
-  id: string;
-  title: string;
-  createdAt: string;
-  updatedAt: string;
-  reportId: string | null;
-};
-
-type ReportEntry = {
-  id: string;
-  title: string;
-  createdAt: string;
-  report: ComplianceReport;
-  vectorStoreId?: string;
-};
-
-type AnalysisJobState = {
-  status: "running" | "done" | "error";
-  reportId?: string;
-  vectorStoreId?: string;
-  error?: string;
-};
-
-type AnalysisStatusPayload = {
-  status?: "running" | "done" | "error";
-  report?: ComplianceReport;
-  reportId?: string;
-  vectorStoreId?: string;
-  error?: string;
-  threadId?: string;
-};
-
-function loadFromStorage<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    if (!raw) return fallback;
-    return JSON.parse(raw) as T;
-  } catch {
-    return fallback;
-  }
-}
-
-function formatShortDate(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
-function deriveChatTitle(content: string): string {
-  const firstLine = content.split("\n")[0]?.trim() ?? "";
-  if (!firstLine) return DEFAULT_CHAT_TITLE;
-  return firstLine.length > 52 ? `${firstLine.slice(0, 52)}…` : firstLine;
-}
-
-function deriveReportTitle(report: ComplianceReport): string {
-  const contextSummary = report.inputs.context_summary?.trim();
-  if (contextSummary) return contextSummary;
-  const labelName = report.inputs.label_files?.[0];
-  if (labelName) return labelName;
-  return `Report ${report.run_id.slice(0, 8)}`;
-}
-
-function formatRelativeTime(timestamp: string): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return "Just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${diffDays}d ago`;
-}
-
-// ============================================================================
-// ICONS
-// ============================================================================
-
-function DashboardIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v2a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 16a1 1 0 011-1h4a1 1 0 011 1v3a1 1 0 01-1 1H5a1 1 0 01-1-1v-3zM14 13a1 1 0 011-1h4a1 1 0 011 1v6a1 1 0 01-1 1h-4a1 1 0 01-1-1v-6z" />
-    </svg>
-  );
-}
-
-function ProductsIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
-    </svg>
-  );
-}
-
-
-function CopilotIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
-    </svg>
-  );
-}
-
-function KnowledgeIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
-    </svg>
-  );
-}
-
-function SearchIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-    </svg>
-  );
-}
-
-function ChevronRightIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-    </svg>
-  );
-}
-
-function AlertIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-    </svg>
-  );
-}
-
-function FileIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-    </svg>
-  );
-}
-
-function ClockIcon({ className }: { className?: string }) {
-  return (
-    <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-    </svg>
-  );
-}
-
-// ============================================================================
-// MAIN COMPONENT
-// ============================================================================
+import { ChatPanel } from "./components/ChatPanel";
+import { DashboardSection } from "./components/DashboardSection";
+import { ComplianceSection } from "./components/ComplianceSection";
+import { useAppState } from "./hooks/useAppState";
+import { useComplianceState } from "./hooks/useComplianceState";
+import type { NavItem } from "@/lib/mockData";
+import {
+  DEFAULT_CHAT_TITLE,
+  DashboardIcon,
+  ProductsIcon,
+  CopilotIcon,
+  FileIcon,
+  KnowledgeIcon,
+  SearchIcon,
+  ChevronRightIcon,
+  ClockIcon,
+  formatShortDate,
+} from "@/lib/mockData";
 
 export default function Home() {
-  // Navigation state
-  const [activeNav, setActiveNav] = useState<NavItem>("dashboard");
-
-  // Session & chat state
-  const [sessionId, setSessionId] = useState<string>("");
-  const [vectorStoreId, setVectorStoreId] = useState<string | undefined>();
-  const [files, setFiles] = useState<UploadedFile[]>([]);
-  const [context, setContext] = useState<ContextFormData>({
-    productName: "",
-    productCategory: "",
-    abv: "",
-    containerSize: "",
-    producer: "",
-    additionalNotes: "",
-  });
-  const [focusFindingId, setFocusFindingId] = useState<string | undefined>();
-  const [chatThreads, setChatThreads] = useState<ChatThread[]>([]);
-  const [reportThreads, setReportThreads] = useState<ReportThread[]>([]);
-  const [reportHistory, setReportHistory] = useState<ReportEntry[]>([]);
-  const [activeChatId, setActiveChatId] = useState<string>("");
-  const [activeReportThreadId, setActiveReportThreadId] = useState<string>("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const analysisPollersRef = useRef<Record<string, ReturnType<typeof setInterval>>>({});
-  const hasSyncedAnalysesRef = useRef(false);
-
-  
-  // Stable ID for new chats (generated once, reused until thread is created)
-  const [pendingChatId, setPendingChatId] = useState<string>(() => uuidv4());
-  
-  const [analysisJobs, setAnalysisJobs] = useState<Record<string, AnalysisJobState>>({});
-
-  // Filter state for products
-  const [productStatusFilter, setProductStatusFilter] = useState<string>("all");
-  const [productSearchQuery, setProductSearchQuery] = useState<string>("");
-
-  // Filter state for knowledgebase
-  const [docCategoryFilter, setDocCategoryFilter] = useState<string>("all");
-  const [docSearchQuery, setDocSearchQuery] = useState<string>("");
-
-  // Initialize session (cookie-backed, local cache for resilience)
-  useEffect(() => {
-    let isMounted = true;
-    const initSession = async () => {
-      const storedId = localStorage.getItem(SESSION_KEY);
-      try {
-        const response = await fetch("/api/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ clientId: storedId }),
-        });
-        const data = response.ok ? await response.json() : null;
-        const nextId = data?.sessionId || storedId || uuidv4();
-        localStorage.setItem(SESSION_KEY, nextId);
-        if (isMounted) {
-          setSessionId(nextId);
-          setChatUserId(nextId);
-        }
-      } catch {
-        const fallbackId = storedId || uuidv4();
-        localStorage.setItem(SESSION_KEY, fallbackId);
-        if (isMounted) {
-          setSessionId(fallbackId);
-          setChatUserId(fallbackId);
-        }
-      }
-    };
-    initSession();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const storedChatThreads = loadFromStorage<ChatThread[]>(CHAT_THREADS_KEY, []);
-    const storedReportThreads = loadFromStorage<ReportThread[]>(REPORT_THREADS_KEY, []);
-    const storedReports = loadFromStorage<ReportEntry[]>(REPORT_HISTORY_KEY, []);
-
-    const normalizedChatThreads: ChatThread[] = storedChatThreads.map((thread) => ({
-      id: thread.id,
-      title: thread.title || DEFAULT_CHAT_TITLE,
-      createdAt: thread.createdAt || new Date().toISOString(),
-      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
-    }));
-
-    const normalizedReportThreads: ReportThread[] = storedReportThreads.map((thread) => ({
-      id: thread.id,
-      title: thread.title || "Analyzing label...",
-      createdAt: thread.createdAt || new Date().toISOString(),
-      updatedAt: thread.updatedAt || thread.createdAt || new Date().toISOString(),
-      reportId: thread.reportId ?? null,
-    }));
-
-    const storedActiveChatId = localStorage.getItem(ACTIVE_CHAT_KEY);
-    const storedActiveReportThreadId = localStorage.getItem(ACTIVE_REPORT_THREAD_KEY);
-
-    const sortedChats = [...normalizedChatThreads].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
-    const sortedReports = [...normalizedReportThreads].sort(
-      (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-    );
-
-    const nextActiveChatId =
-      storedActiveChatId && normalizedChatThreads.some((thread) => thread.id === storedActiveChatId)
-        ? storedActiveChatId
-        : sortedChats[0]?.id ?? "";
-
-    const nextActiveReportThreadId =
-      storedActiveReportThreadId &&
-      normalizedReportThreads.some((thread) => thread.id === storedActiveReportThreadId)
-        ? storedActiveReportThreadId
-        : sortedReports[0]?.id ?? "";
-
-    setChatThreads(normalizedChatThreads);
-    setReportThreads(normalizedReportThreads);
-    setReportHistory(storedReports);
-    setActiveChatId(nextActiveChatId);
-    setActiveReportThreadId(nextActiveReportThreadId);
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem(CHAT_THREADS_KEY, JSON.stringify(chatThreads));
-  }, [chatThreads]);
-
-  useEffect(() => {
-    localStorage.setItem(REPORT_THREADS_KEY, JSON.stringify(reportThreads));
-  }, [reportThreads]);
-
-  useEffect(() => {
-    localStorage.setItem(REPORT_HISTORY_KEY, JSON.stringify(reportHistory));
-  }, [reportHistory]);
-
-  useEffect(() => {
-    if (activeChatId) {
-      localStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
-    }
-  }, [activeChatId]);
-
-  useEffect(() => {
-    if (activeReportThreadId) {
-      localStorage.setItem(ACTIVE_REPORT_THREAD_KEY, activeReportThreadId);
-    }
-  }, [activeReportThreadId]);
-
-  useEffect(() => {
-    setFocusFindingId(undefined);
-  }, [activeReportThreadId]);
-
-  // Computed values
-  const hasReadyFiles = files.some((f) => f.status === "ready");
-  const hasUploadingFiles = files.some((f) => f.status === "uploading" || f.status === "processing");
-  const hasImages = files.some((f) => f.isImage && f.status === "ready");
-  const isAnalyzing = useMemo(
-    () => Object.values(analysisJobs).some((job) => job.status === "running"),
-    [analysisJobs]
-  );
-
-
-  const activeReportThread = useMemo(
-    () => reportThreads.find((thread) => thread.id === activeReportThreadId) || null,
-    [reportThreads, activeReportThreadId]
-  );
-  const activeReportEntry = useMemo(
-    () =>
-      activeReportThread?.reportId
-        ? reportHistory.find((entry) => entry.id === activeReportThread.reportId) || null
-        : null,
-    [reportHistory, activeReportThread]
-  );
-
-  const activeReport = activeReportEntry?.report ?? null;
-  const reportLoading = activeReportThread
-    ? analysisJobs[activeReportThread.id]?.status === "running"
-    : false;
-  const reportError =
-    activeReportThread && analysisJobs[activeReportThread.id]?.status === "error"
-      ? analysisJobs[activeReportThread.id]?.error ?? null
-      : null;
-  const reportVectorStoreId =
-    activeReportEntry?.vectorStoreId ??
-    (activeReportThread ? analysisJobs[activeReportThread.id]?.vectorStoreId : undefined) ??
-    "";
-  const reportChatTitle =
-    activeReport?.inputs.context_summary?.trim() ||
-    activeReportThread?.title ||
-    "AI Compliance Assistant";
-
-  const sortedChatThreads = useMemo(
-    () =>
-      [...chatThreads].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      ),
-    [chatThreads]
-  );
-
-  const sortedReportThreads = useMemo(
-    () =>
-      [...reportThreads].sort(
-        (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()
-      ),
-    [reportThreads]
-  );
-
-  // Auto-fill context from extracted details
-  useEffect(() => {
-    const imageFile = files.find((f) => f.isImage && f.extractedDetails);
-    if (imageFile?.extractedDetails) {
-      setContext((prev) => ({
-        productName: prev.productName || imageFile.extractedDetails?.productName || "",
-        productCategory: prev.productCategory || imageFile.extractedDetails?.productCategory || "",
-        abv: prev.abv || imageFile.extractedDetails?.abv || "",
-        containerSize: prev.containerSize || imageFile.extractedDetails?.containerSize || "",
-        producer: prev.producer || imageFile.extractedDetails?.producer || "",
-        additionalNotes: prev.additionalNotes,
-      }));
-    }
-  }, [files]);
-
-  // File upload handlers
-  const uploadSingleFile = useCallback(
-    async (file: File, fileId: string, currentVectorStoreId: string | undefined) => {
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("sessionId", sessionId);
-        if (currentVectorStoreId) {
-          formData.append("vectorStoreId", currentVectorStoreId);
-        }
-
-        const response = await fetch("/api/uploads", {
-          method: "POST",
-          body: formData,
-        });
-
-        const result: UploadResponse = await response.json();
-
-        if (!response.ok) {
-          throw new Error((result as unknown as { error: string }).error || "Upload failed");
-        }
-
-        return { success: true, result, fileId };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : "Upload failed",
-          fileId,
-        };
-      }
-    },
-    [sessionId]
-  );
-
-  const handleFileSelect = useCallback(
-    async (event: React.ChangeEvent<HTMLInputElement>) => {
-      const selectedFiles = Array.from(event.target.files || []);
-      if (selectedFiles.length === 0) return;
-
-      const newFiles: UploadedFile[] = selectedFiles.map((file) => ({
-        id: crypto.randomUUID(),
-        name: file.name,
-        mimeType: file.type,
-        size: file.size,
-        isImage: file.type.startsWith("image/"),
-        status: "uploading" as const,
-      }));
-
-      setFiles((prev) => [...prev, ...newFiles]);
-
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-
-      let currentVectorStoreId = vectorStoreId;
-      const fileQueue = selectedFiles.map((file, i) => ({ file, id: newFiles[i].id }));
-
-      for (let i = 0; i < fileQueue.length; i += UPLOAD_CONCURRENCY) {
-        const batch = fileQueue.slice(i, i + UPLOAD_CONCURRENCY);
-
-        const results = await Promise.all(
-          batch.map(({ file, id }) => uploadSingleFile(file, id, currentVectorStoreId))
-        );
-
-        for (const res of results) {
-          if (res.success && res.result) {
-            if (res.result.vectorStoreId && !currentVectorStoreId) {
-              currentVectorStoreId = res.result.vectorStoreId;
-              setVectorStoreId(res.result.vectorStoreId);
-            }
-
-            setFiles((prev) =>
-              prev.map((f) =>
-                f.id === res.fileId
-                  ? {
-                      ...f,
-                      status: "ready" as const,
-                      extractedDetails: res.result!.extractedDetails,
-                      imageBase64: res.result!.imageBase64,
-                    }
-                  : f
-              )
-            );
-          } else {
-            setFiles((prev) =>
-              prev.map((f) =>
-                f.id === res.fileId
-                  ? {
-                      ...f,
-                      status: "error" as const,
-                      error: res.error || "Upload failed",
-                    }
-                  : f
-              )
-            );
-          }
-        }
-      }
-    },
-    [vectorStoreId, uploadSingleFile]
-  );
-
-  const removeFile = useCallback((fileId: string) => {
-    setFiles((prev) => prev.filter((f) => f.id !== fileId));
-  }, []);
-
-  // Called when user sends first message - creates thread if needed
-  const handleChatActivity = useCallback((chatId: string, content: string) => {
-    const now = new Date().toISOString();
-
-    // Check if this is a new chat (chatId might be temporary)
-    const existingThread = chatThreads.find((t) => t.id === chatId);
-
-    if (!existingThread) {
-      // Create new thread for first message
-      const newThread: ChatThread = {
-        id: chatId,
-        title: deriveChatTitle(content),
-        createdAt: now,
-        updatedAt: now,
-      };
-      setChatThreads((prev) => [newThread, ...prev]);
-      setActiveChatId(chatId);
-      setActiveNav("pilot");
-    } else {
-      // Update existing thread
-      setChatThreads((prev) =>
-        prev.map((thread) => {
-          if (thread.id !== chatId) return thread;
-          return { ...thread, updatedAt: now };
-        })
-      );
-    }
-  }, [chatThreads]);
-
-  const handleReportChatActivity = useCallback((threadId: string, content: string) => {
-    void content;
-    const now = new Date().toISOString();
-    setReportThreads((prev) =>
-      prev.map((thread) =>
-        thread.id === threadId ? { ...thread, updatedAt: now } : thread
-      )
-    );
-  }, []);
-
-  const handleSelectChat = useCallback(
-    (chatId: string) => {
-      setActiveChatId(chatId);
-      setFocusFindingId(undefined);
-      setActiveNav("pilot");
-    },
-    []
-  );
-
-  const handleSelectReportThread = useCallback(
-    (threadId: string) => {
-      setActiveReportThreadId(threadId);
-      setFocusFindingId(undefined);
-      setActiveNav("compliance");
-      setFiles([]);
-      setVectorStoreId(undefined);
-    },
-    []
-  );
-
-  // Start a new chat - doesn't create thread until first message
-  const handleNewChat = useCallback(() => {
-    setActiveChatId("");
-    setFocusFindingId(undefined);
-    setActiveNav("pilot");
-    setPendingChatId(uuidv4()); // Generate new ID for new chat
-  }, []);
-
-  // Start a new compliance analysis
-  const handleStartUpload = useCallback(() => {
-    setActiveNav("compliance");
-    setActiveReportThreadId("");
-    setVectorStoreId(undefined);
-    setFiles([]);
-    setContext({
-      productName: "",
-      productCategory: "",
-      abv: "",
-      containerSize: "",
-      producer: "",
-      additionalNotes: "",
-    });
-    setFocusFindingId(undefined);
-  }, []);
-
-  const stopAnalysisPolling = useCallback((threadId: string) => {
-    const poller = analysisPollersRef.current[threadId];
-    if (poller) {
-      clearInterval(poller);
-      delete analysisPollersRef.current[threadId];
-    }
-  }, []);
-
-  const handleDeleteChat = useCallback(
-    (chatId: string) => {
-      setChatThreads((prev) => {
-        const remaining = prev.filter((t) => t.id !== chatId);
-        if (chatId === activeChatId) {
-          const nextActive = remaining[0]?.id ?? "";
-          setActiveChatId(nextActive);
-          if (!nextActive) {
-            setPendingChatId(uuidv4());
-          }
-        }
-        return remaining;
-      });
-      clearChatMemory(chatId);
-    },
-    [activeChatId]
-  );
-
-  const handleDeleteReportThread = useCallback(
-    (threadId: string) => {
-      const thread = reportThreads.find((t) => t.id === threadId);
-      const reportId = thread?.reportId;
-
-      setReportThreads((prev) => {
-        const remaining = prev.filter((t) => t.id !== threadId);
-        if (threadId === activeReportThreadId) {
-          const nextActive = remaining[0]?.id ?? "";
-          setActiveReportThreadId(nextActive);
-        }
-        return remaining;
-      });
-
-      if (reportId) {
-        setReportHistory((prev) => prev.filter((entry) => entry.id !== reportId));
-      }
-
-      setAnalysisJobs((prev) => {
-        if (!prev[threadId]) return prev;
-        const next = { ...prev };
-        delete next[threadId];
-        return next;
-      });
-
-      stopAnalysisPolling(threadId);
-
-      clearChatMemory(threadId);
-    },
-    [activeReportThreadId, reportThreads, stopAnalysisPolling]
-  );
-
-  const ensureReportThread = useCallback((threadId: string, title?: string) => {
-    setReportThreads((prev) => {
-      if (prev.some((thread) => thread.id === threadId)) return prev;
-      const now = new Date().toISOString();
-      const newThread: ReportThread = {
-        id: threadId,
-        title: title || "Analyzing label...",
-        createdAt: now,
-        updatedAt: now,
-        reportId: null,
-      };
-      return [newThread, ...prev];
-    });
-  }, []);
-
-  const applyAnalysisReport = useCallback(
-    (threadId: string, result: ComplianceReport, storeId?: string) => {
-      const reportTitle = deriveReportTitle(result);
-      const completedAt = new Date().toISOString();
-
-      setReportHistory((prev) => {
-        const nextEntry: ReportEntry = {
-          id: result.run_id,
-          title: reportTitle,
-          createdAt: result.created_at,
-          report: result,
-          vectorStoreId: storeId || undefined,
-        };
-        const existingIndex = prev.findIndex((entry) => entry.id === nextEntry.id);
-        if (existingIndex >= 0) {
-          const next = [...prev];
-          next[existingIndex] = nextEntry;
-          return next;
-        }
-        return [nextEntry, ...prev];
-      });
-
-      setReportThreads((prev) =>
-        prev.map((thread) =>
-          thread.id === threadId
-            ? { ...thread, reportId: result.run_id, title: reportTitle, updatedAt: completedAt }
-            : thread
-        )
-      );
-    },
-    []
-  );
-
-  const handleAnalysisStatus = useCallback(
-    (threadId: string, payload: AnalysisStatusPayload) => {
-      if (!payload?.status) return;
-
-      if (payload.status === "running") {
-        ensureReportThread(threadId);
-        setAnalysisJobs((prev) => ({
-          ...prev,
-          [threadId]: {
-            status: "running",
-            reportId: payload.reportId,
-            vectorStoreId: payload.vectorStoreId,
-          },
-        }));
-        return;
-      }
-
-      if (payload.status === "done" && payload.report) {
-        applyAnalysisReport(threadId, payload.report, payload.vectorStoreId);
-        setAnalysisJobs((prev) => {
-          if (!prev[threadId]) return prev;
-          const next = { ...prev };
-          delete next[threadId];
-          return next;
-        });
-        stopAnalysisPolling(threadId);
-        return;
-      }
-
-      if (payload.status === "error") {
-        setAnalysisJobs((prev) => ({
-          ...prev,
-          [threadId]: {
-            status: "error",
-            error: payload.error || "Analysis failed",
-          },
-        }));
-        stopAnalysisPolling(threadId);
-      }
-    },
-    [applyAnalysisReport, ensureReportThread, stopAnalysisPolling]
-  );
-
-  const startAnalysisPolling = useCallback(
-    (threadId: string) => {
-      if (analysisPollersRef.current[threadId]) return;
-
-      const poll = async () => {
-        try {
-          const query = new URLSearchParams({ threadId });
-          if (sessionId) {
-            query.set("sessionId", sessionId);
-          }
-          const response = await fetch(`/api/analyze?${query.toString()}`);
-          if (response.status === 404) {
-            handleAnalysisStatus(threadId, { status: "error", error: "Analysis not found. Please retry." });
-            return;
-          }
-          if (!response.ok) {
-            return;
-          }
-          const data = await response.json();
-          handleAnalysisStatus(threadId, data);
-        } catch {
-          // Ignore transient errors
-        }
-      };
-
-      void poll();
-      analysisPollersRef.current[threadId] = setInterval(poll, 2000);
-    },
-    [handleAnalysisStatus, sessionId]
-  );
-
-  const syncPendingAnalyses = useCallback(async () => {
-    const pendingThreads = reportThreads.filter((thread) => !thread.reportId);
-    if (pendingThreads.length === 0) return;
-
-    setAnalysisJobs((prev) => {
-      const next = { ...prev };
-      for (const thread of pendingThreads) {
-        if (!next[thread.id]) {
-          next[thread.id] = { status: "running" };
-        }
-      }
-      return next;
-    });
-
-    const activeQuery = new URLSearchParams({ status: "active" });
-    if (sessionId) {
-      activeQuery.set("sessionId", sessionId);
-    }
-    const activeJobs = await fetch(`/api/analyze?${activeQuery.toString()}`)
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data) => (Array.isArray(data?.jobs) ? data.jobs : []))
-      .catch(() => []);
-
-    const activeIds = new Set<string>();
-    for (const job of activeJobs) {
-      if (!job?.threadId) continue;
-      activeIds.add(job.threadId);
-      handleAnalysisStatus(job.threadId, job);
-      startAnalysisPolling(job.threadId);
-    }
-
-    await Promise.all(
-      pendingThreads
-        .filter((thread) => !activeIds.has(thread.id))
-        .map(async (thread) => {
-          try {
-            const query = new URLSearchParams({ threadId: thread.id });
-            if (sessionId) {
-              query.set("sessionId", sessionId);
-            }
-            const response = await fetch(`/api/analyze?${query.toString()}`);
-            if (response.status === 404) {
-              handleAnalysisStatus(thread.id, {
-                status: "error",
-                error: "Analysis not found. Please retry.",
-              });
-              return;
-            }
-            if (!response.ok) return;
-            const data = await response.json();
-            handleAnalysisStatus(thread.id, data);
-            if (data?.status === "running") {
-              startAnalysisPolling(thread.id);
-            }
-          } catch {
-            // Ignore sync failures
-          }
-        })
-    );
-  }, [reportThreads, handleAnalysisStatus, startAnalysisPolling, sessionId]);
-
-  const handleAnalyze = async () => {
-    if (!hasReadyFiles || isAnalyzing || !vectorStoreId || !hasImages) {
-      return;
-    }
-
-    const now = new Date().toISOString();
-    const readyFiles = files.filter((f) => f.status === "ready");
-    
-    // Derive title from first image file name
-    const firstImageFile = readyFiles.find((f) => f.isImage);
-    const pendingTitle = firstImageFile?.name || "Analyzing label...";
-    
-    // Create thread IMMEDIATELY so it shows in history
-    const newThreadId = uuidv4();
-    const newThread: ReportThread = {
-      id: newThreadId,
-      title: pendingTitle,
-      createdAt: now,
-      updatedAt: now,
-      reportId: null, // Will be set when analysis completes
-    };
-    setReportThreads((prev) => [newThread, ...prev]);
-
-    // Switch to viewing this thread
-    setActiveNav("compliance");
-    setActiveReportThreadId(newThreadId);
-    setAnalysisJobs((prev) => ({
-      ...prev,
-      [newThreadId]: { status: "running", vectorStoreId },
-    }));
-    try {
-      const images: AnalysisImage[] = readyFiles
-        .filter((f) => f.isImage && f.imageBase64)
-        .map((f) => ({
-          base64: f.imageBase64!,
-          mimeType: f.mimeType,
-          filename: f.name,
-        }));
-
-      const request: AnalyzeRequest = {
-        sessionId,
-        threadId: newThreadId,
-        vectorStoreId,
-        context,
-        images,
-        readyFileNames: readyFiles.map((f) => f.name),
-      };
-
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(request),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Analysis failed");
-      }
-
-      handleAnalysisStatus(newThreadId, result);
-      if (result.status === "running") {
-        startAnalysisPolling(newThreadId);
-      }
-    } catch (error) {
-      setAnalysisJobs((prev) => ({
-        ...prev,
-        [newThreadId]: {
-          status: "error",
-          error: error instanceof Error ? error.message : "Analysis failed",
-        },
-      }));
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      Object.values(analysisPollersRef.current).forEach((poller) => clearInterval(poller));
-      analysisPollersRef.current = {};
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!sessionId || hasSyncedAnalysesRef.current || reportThreads.length === 0) return;
-    hasSyncedAnalysesRef.current = true;
-    void syncPendingAnalyses();
-  }, [sessionId, reportThreads.length, syncPendingAnalyses]);
-
-  const handleAskAboutFinding = useCallback((findingId: string) => {
-    setFocusFindingId(findingId);
-  }, []);
-
-  const handleJumpToFinding = useCallback((findingId: string) => {
-    const element = document.getElementById(`finding-${findingId}`);
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, []);
-
-  const handleClearFocus = useCallback(() => {
-    setFocusFindingId(undefined);
-  }, []);
-
-  const handleOpenDocUrl = useCallback((url: string) => {
-    window.open(url, "_blank", "noopener,noreferrer");
-  }, []);
-
-  const formatFileSize = (bytes: number): string => {
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  };
-
-  // Filtered products
-  const filteredProducts = useMemo(() => {
-    return MOCK_PRODUCTS.filter((product) => {
-      const matchesStatus = productStatusFilter === "all" || product.status === productStatusFilter;
-      const matchesSearch =
-        !productSearchQuery ||
-        product.name.toLowerCase().includes(productSearchQuery.toLowerCase()) ||
-        product.category.toLowerCase().includes(productSearchQuery.toLowerCase());
-      return matchesStatus && matchesSearch;
-    });
-  }, [productStatusFilter, productSearchQuery]);
-
-  // Filtered documents
-  const filteredDocs = useMemo(() => {
-    return MOCK_KNOWLEDGE_DOCS.filter((doc) => {
-      const matchesCategory = docCategoryFilter === "all" || doc.category === docCategoryFilter;
-      const matchesSearch =
-        !docSearchQuery ||
-        doc.name.toLowerCase().includes(docSearchQuery.toLowerCase()) ||
-        doc.description.toLowerCase().includes(docSearchQuery.toLowerCase()) ||
-        doc.fileName.toLowerCase().includes(docSearchQuery.toLowerCase());
-      return matchesCategory && matchesSearch;
-    });
-  }, [docCategoryFilter, docSearchQuery]);
-
-  const knowledgebaseStats = useMemo(() => {
-    const timestamps = MOCK_KNOWLEDGE_DOCS
-      .map((doc) => Date.parse(doc.lastUpdated))
-      .filter((value) => !Number.isNaN(value));
-    const latestTimestamp = timestamps.length ? Math.max(...timestamps) : undefined;
-    return {
-      total: MOCK_KNOWLEDGE_DOCS.length,
-      latest: latestTimestamp ? new Date(latestTimestamp).toISOString().slice(0, 10) : "—",
-    };
-  }, []);
-
-  // KPI calculations
-  const kpiData = useMemo(() => {
-    const total = MOCK_PRODUCTS.length;
-    const inReview = MOCK_PRODUCTS.filter((p) => p.status === "in_review").length;
-    const blocked = MOCK_PRODUCTS.filter((p) => p.status === "blocked").length;
-    const avgDays = Math.round(
-      MOCK_PRODUCTS.filter((p) => p.status !== "approved").reduce((sum, p) => sum + p.daysInStage, 0) /
-        Math.max(1, MOCK_PRODUCTS.filter((p) => p.status !== "approved").length)
-    );
-    return { total, inReview, blocked, avgDays };
-  }, []);
-
-  // Loading state - only need sessionId now
-  if (!sessionId) {
+  const app = useAppState();
+  const compliance = useComplianceState(app.sessionId);
+
+  // Loading state
+  if (!app.sessionId) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <div className="animate-spin rounded-full h-8 w-8 border-2 border-primary border-t-transparent"></div>
       </div>
     );
   }
-
-  // ============================================================================
-  // RENDER: SIDEBAR
-  // ============================================================================
 
   const navItems: { id: NavItem; label: string; icon: React.ReactNode }[] = [
     { id: "dashboard", label: "Dashboard", icon: <DashboardIcon className="w-5 h-5" /> },
@@ -1207,11 +53,10 @@ export default function Home() {
     <div className="min-h-screen bg-background flex">
       {/* Sidebar */}
       <aside className="w-64 border-r bg-sidebar flex flex-col shrink-0">
-        {/* Logo */}
         <div className="h-16 flex items-center gap-3 px-4 border-b">
-          <img 
-            src="/gs_large_logo.png" 
-            alt="Global Spirits" 
+          <img
+            src="/gs_large_logo.png"
+            alt="Global Spirits"
             className="h-9 w-auto object-contain"
           />
           <div>
@@ -1220,15 +65,14 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1">
           {navItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveNav(item.id)}
+              onClick={() => app.setActiveNav(item.id)}
               className={cn(
                 "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors",
-                activeNav === item.id
+                app.activeNav === item.id
                   ? "bg-sidebar-accent text-sidebar-accent-foreground"
                   : "text-muted-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
               )}
@@ -1239,7 +83,6 @@ export default function Home() {
           ))}
         </nav>
 
-        {/* Sidebar footer */}
         <div className="p-3 border-t">
           <div className="flex items-center gap-3 px-3 py-2">
             <Avatar size="sm">
@@ -1280,155 +123,13 @@ export default function Home() {
 
         {/* Page content */}
         <main className="flex-1 overflow-auto">
-          {/* ================================================================
-              DASHBOARD
-          ================================================================ */}
-          {activeNav === "dashboard" && (
-            <div className="p-6 space-y-6">
-              <div>
-                <h2 className="text-2xl font-bold text-foreground">Dashboard</h2>
-                <p className="text-muted-foreground">Overview of your compliance pipeline</p>
-              </div>
-
-              {/* KPI Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardDescription>Total Products</CardDescription>
-                    <CardTitle className="text-3xl">{kpiData.total}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xs text-muted-foreground">Across all markets</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardDescription>In Review</CardDescription>
-                    <CardTitle className="text-3xl text-blue-600">{kpiData.inReview}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xs text-muted-foreground">Pending TTB approval</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardDescription>Blockers</CardDescription>
-                    <CardTitle className="text-3xl text-destructive">{kpiData.blocked}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xs text-muted-foreground">Requiring action</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardDescription>Avg. Days in Stage</CardDescription>
-                    <CardTitle className="text-3xl">{kpiData.avgDays}</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-xs text-muted-foreground">Active products</p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Stage Distribution (Mocked Chart) */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Stage Distribution</CardTitle>
-                    <CardDescription>Products by compliance stage</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {[
-                        { stage: "Formula Approval", count: 2, color: "bg-orange-500" },
-                        { stage: "COLA/Labeling", count: 2, color: "bg-blue-500" },
-                        { stage: "Import/Customs", count: 1, color: "bg-purple-500" },
-                        { stage: "State Approvals", count: 1, color: "bg-green-500" },
-                        { stage: "Complete", count: 2, color: "bg-emerald-500" },
-                      ].map((item) => (
-                        <div key={item.stage} className="flex items-center gap-3">
-                          <div className={cn("w-3 h-3 rounded-full", item.color)} />
-                          <span className="flex-1 text-sm">{item.stage}</span>
-                          <span className="text-sm font-medium">{item.count}</span>
-                          <div className="w-24">
-                            <Progress value={(item.count / 8) * 100} className="h-2" />
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Top Blockers */}
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Top Blockers</CardTitle>
-                    <CardDescription>Issues requiring immediate attention</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="space-y-4">
-                      {MOCK_BLOCKERS.map((blocker) => (
-                        <div key={blocker.id} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                          <AlertIcon className={cn(
-                            "w-5 h-5 mt-0.5 shrink-0",
-                            blocker.severity === "critical" ? "text-destructive" :
-                            blocker.severity === "high" ? "text-orange-500" : "text-yellow-500"
-                          )} />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium">{blocker.productName}</p>
-                            <p className="text-xs text-muted-foreground truncate">{blocker.issue}</p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <Badge variant={
-                                blocker.severity === "critical" ? "destructive" :
-                                blocker.severity === "high" ? "default" : "secondary"
-                              } className="text-[10px]">
-                                {blocker.severity}
-                              </Badge>
-                              <span className="text-[10px] text-muted-foreground">{blocker.daysOpen}d open</span>
-                            </div>
-                          </div>
-                          <Avatar size="sm">
-                            <AvatarFallback className="text-[10px]">{blocker.ownerInitials}</AvatarFallback>
-                          </Avatar>
-                        </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Recent Activity */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Recent Activity</CardTitle>
-                  <CardDescription>Latest compliance updates</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {MOCK_ACTIVITIES.map((activity) => (
-                      <div key={activity.id} className="flex items-center gap-4">
-                        <div className="w-2 h-2 rounded-full bg-primary shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm">
-                            <span className="font-medium">{activity.action}</span>
-                            {" - "}
-                            <span className="text-muted-foreground">{activity.product}</span>
-                          </p>
-                        </div>
-                        <span className="text-xs text-muted-foreground shrink-0">{activity.user}</span>
-                        <span className="text-xs text-muted-foreground shrink-0">{formatRelativeTime(activity.timestamp)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
+          {/* DASHBOARD */}
+          {app.activeNav === "dashboard" && (
+            <DashboardSection kpiData={compliance.kpiData} />
           )}
 
-          {/* ================================================================
-              PRODUCTS
-          ================================================================ */}
-          {activeNav === "products" && (
+          {/* PRODUCTS */}
+          {app.activeNav === "products" && (
             <div className="p-6 space-y-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -1437,18 +138,17 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Filters */}
               <div className="flex items-center gap-4">
                 <div className="relative flex-1 max-w-sm">
                   <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     placeholder="Search products..."
                     className="pl-9"
-                    value={productSearchQuery}
-                    onChange={(e) => setProductSearchQuery(e.target.value)}
+                    value={compliance.productSearchQuery}
+                    onChange={(e) => compliance.setProductSearchQuery(e.target.value)}
                   />
                 </div>
-                <Select value={productStatusFilter} onValueChange={setProductStatusFilter}>
+                <Select value={compliance.productStatusFilter} onValueChange={compliance.setProductStatusFilter}>
                   <SelectTrigger className="w-[150px]">
                     <SelectValue placeholder="Status" />
                   </SelectTrigger>
@@ -1462,7 +162,6 @@ export default function Home() {
                 </Select>
               </div>
 
-              {/* Products Table */}
               <Card>
                 <Table>
                   <TableHeader>
@@ -1478,7 +177,7 @@ export default function Home() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredProducts.map((product) => (
+                    {compliance.filteredProducts.map((product) => (
                       <TableRow key={product.id}>
                         <TableCell>
                           <div>
@@ -1525,10 +224,8 @@ export default function Home() {
             </div>
           )}
 
-          {/* ================================================================
-              AI PILOT
-          ================================================================ */}
-          {activeNav === "pilot" && (
+          {/* AI PILOT */}
+          {app.activeNav === "pilot" && (
             <div className="p-6 h-[calc(100vh-4rem)]">
               <div className="h-full flex gap-6">
                 <div className="w-80 shrink-0">
@@ -1538,22 +235,22 @@ export default function Home() {
                     </CardHeader>
                     <CardContent className="flex-1 flex flex-col p-3 pt-0 min-h-0">
                       <button
-                        onClick={handleNewChat}
+                        onClick={app.handleNewChat}
                         className="px-3 py-2 text-xs font-medium rounded-lg border border-primary/20 text-primary hover:bg-primary/5 transition-colors"
                       >
                         New chat
                       </button>
                       <ScrollArea className="flex-1 min-h-0 mt-3">
-                        {sortedChatThreads.length === 0 ? (
+                        {app.sortedChatThreads.length === 0 ? (
                           <p className="text-xs text-muted-foreground px-2">No chats yet.</p>
                         ) : (
                           <div className="space-y-1 pr-2 w-full max-w-full">
-                            {sortedChatThreads.map((thread) => {
-                              const isActive = thread.id === activeChatId;
+                            {app.sortedChatThreads.map((thread) => {
+                              const isActive = thread.id === app.activeChatId;
                               return (
                                 <div key={thread.id} className="flex items-start gap-2 min-w-0 w-full max-w-full">
                                   <button
-                                    onClick={() => handleSelectChat(thread.id)}
+                                    onClick={() => app.handleSelectChat(thread.id)}
                                     className={cn(
                                       "flex-1 min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden",
                                       isActive
@@ -1578,7 +275,7 @@ export default function Home() {
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => handleDeleteChat(thread.id)}
+                                    onClick={() => app.handleDeleteChat(thread.id)}
                                     className="mt-2 p-1 rounded-full text-muted-foreground hover:text-destructive hover:bg-background transition-colors shrink-0"
                                     aria-label="Delete chat"
                                   >
@@ -1599,11 +296,11 @@ export default function Home() {
                 <div className="flex-1 min-w-0">
                   <Card className="h-full flex flex-col overflow-hidden">
                     <ChatPanel
-                      chatId={activeChatId || pendingChatId}
+                      chatId={app.activeChatId || app.pendingChatId}
                       vectorStoreId=""
                       report={null}
                       isReportLoading={false}
-                      onChatActivity={handleChatActivity}
+                      onChatActivity={app.handleChatActivity}
                       title="AI Assistant"
                       subtitle="Ask general TTB labeling questions."
                     />
@@ -1613,299 +310,78 @@ export default function Home() {
             </div>
           )}
 
-          {/* ================================================================
-              AI COMPLIANCE (Chat + Label Analysis)
-          ================================================================ */}
-          {activeNav === "compliance" && (
-            <div className="p-6 h-[calc(100vh-4rem)]">
-              <div className="h-full flex gap-6">
-                <div className="w-80 shrink-0">
-                  <Card className="h-full flex flex-col overflow-hidden">
-                    <CardHeader className="pb-3 shrink-0">
-                      <CardTitle className="text-base">Reports</CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex-1 flex flex-col p-3 pt-0 min-h-0">
-                      <button
-                        onClick={handleStartUpload}
-                        className="px-3 py-2 text-xs font-medium rounded-lg border border-blue-500/20 text-blue-600 hover:bg-blue-50 transition-colors"
-                      >
-                        Analyze Label
-                      </button>
-                      <ScrollArea className="flex-1 min-h-0 mt-3">
-                        {sortedReportThreads.length === 0 ? (
-                          <p className="text-xs text-muted-foreground px-2">No reports yet.</p>
-                        ) : (
-                          <div className="space-y-1 pr-2">
-                            {sortedReportThreads.map((thread) => {
-                              const isActive = thread.id === activeReportThreadId;
-                              const analysisState = analysisJobs[thread.id];
-                              const isThreadAnalyzing = analysisState?.status === "running";
-                              const isThreadError = analysisState?.status === "error";
-                              const statusLabel = isThreadAnalyzing
-                                ? "Analyzing..."
-                                : isThreadError
-                                  ? "Failed"
-                                  : "Report";
-                              const statusDot = isThreadAnalyzing
-                                ? "bg-orange-500 animate-pulse"
-                                : isThreadError
-                                  ? "bg-red-500"
-                                  : "bg-blue-500";
-                              return (
-                                <div
-                                  key={thread.id}
-                                  role="button"
-                                  tabIndex={0}
-                                  onClick={() => handleSelectReportThread(thread.id)}
-                                  onKeyDown={(event) => {
-                                    if (event.key === "Enter" || event.key === " ") {
-                                      event.preventDefault();
-                                      handleSelectReportThread(thread.id);
-                                    }
-                                  }}
-                                  className={cn(
-                                    "w-full min-w-0 text-left px-3 py-2 rounded-lg border transition-colors overflow-hidden cursor-pointer",
-                                    isActive
-                                      ? "border-blue-500/30 bg-blue-50"
-                                      : "border-transparent hover:bg-muted"
-                                  )}
-                                >
-                                  <div className="flex items-start justify-between gap-2 min-w-0">
-                                    <div className="flex items-center gap-2 min-w-0 flex-1 overflow-hidden">
-                                      {isThreadAnalyzing && (
-                                        <svg className="animate-spin h-3.5 w-3.5 text-orange-500 shrink-0" fill="none" viewBox="0 0 24 24">
-                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                        </svg>
-                                      )}
-                                      <div className="text-sm font-medium truncate min-w-0 max-w-full" title={thread.title || "Analyzing label..."}>
-                                        {thread.title || "Analyzing label..."}
-                                      </div>
-                                    </div>
-                                    {!isThreadAnalyzing && (
-                                      <button
-                                        type="button"
-                                        onClick={(event) => {
-                                          event.stopPropagation();
-                                          handleDeleteReportThread(thread.id);
-                                        }}
-                                        className="p-1 rounded-full text-muted-foreground hover:text-destructive hover:bg-background transition-colors shrink-0"
-                                        aria-label="Delete report"
-                                      >
-                                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                      </button>
-                                    )}
-                                  </div>
-                                  <div className="flex items-center gap-1 text-[11px] text-muted-foreground min-w-0 max-w-full overflow-hidden">
-                                    <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", statusDot)} />
-                                    <span className="truncate min-w-0 max-w-full">{statusLabel}</span>
-                                    {!isThreadAnalyzing && thread.updatedAt && (
-                                      <span className="text-muted-foreground/60 shrink-0">
-                                        · {formatShortDate(thread.updatedAt)}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </ScrollArea>
-                    </CardContent>
-                  </Card>
-                </div>
-
-                <div className="flex-1 min-w-0">
-                  {activeReportThreadId ? (
-                    <div className="h-full flex gap-6">
-                      <div className="flex-1 min-w-0">
-                        <Card className="h-full flex flex-col overflow-hidden">
-                          <ChatPanel
-                            chatId={activeReportThreadId}
-                            vectorStoreId={reportVectorStoreId}
-                            report={activeReport}
-                            isReportLoading={reportLoading}
-                            onJumpToFinding={handleJumpToFinding}
-                            focusFindingId={focusFindingId}
-                            onClearFocus={handleClearFocus}
-                            onChatActivity={handleReportChatActivity}
-                            title={reportChatTitle}
-                            subtitle="Ask questions about your compliance report"
-                          />
-                        </Card>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <Card className="h-full overflow-auto">
-                          <CardContent className="p-6">
-                            <ResultsPanel
-                              report={activeReport}
-                              isLoading={reportLoading}
-                              error={reportError}
-                              onAskAboutFinding={handleAskAboutFinding}
-                            />
-                          </CardContent>
-                        </Card>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex justify-center items-start">
-                      <Card className="w-full max-w-3xl">
-                        <CardHeader>
-                          <CardTitle>Upload Label Assets</CardTitle>
-                          <CardDescription>
-                            Drop label images (PNG, JPG, WebP) and optional supporting PDFs. Include front/back labels for best results.
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent className="space-y-6">
-                        {/* Upload area */}
-                        <div
-                          className="border-2 border-dashed border-muted rounded-xl p-8 text-center hover:border-primary/50 hover:bg-primary/5 cursor-pointer transition-colors"
-                          onClick={() => fileInputRef.current?.click()}
-                        >
-                          <input
-                            ref={fileInputRef}
-                            type="file"
-                            accept=".pdf,.png,.jpg,.jpeg,.webp"
-                            multiple
-                            className="hidden"
-                            onChange={handleFileSelect}
-                          />
-                          <svg className="mx-auto h-12 w-12 text-muted-foreground mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 0115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                          </svg>
-                          <p className="text-muted-foreground mb-1">Click to upload or drag and drop</p>
-                          <p className="text-sm text-muted-foreground">PNG, JPG, WEBP, PDF up to 20MB each</p>
-                        </div>
-
-                        {/* File list */}
-                        {files.length > 0 && (
-                          <div className="space-y-3">
-                            <h3 className="text-sm font-medium">Files ({files.length})</h3>
-                            <ul className="space-y-2">
-                              {files.map((file) => (
-                                <li key={file.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                                  <div className="flex items-center gap-3">
-                                    <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center", file.isImage ? "bg-blue-100" : "bg-blue-100/70")}>
-                                      {file.isImage ? (
-                                        <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                                        </svg>
-                                      ) : (
-                                        <FileIcon className="w-5 h-5 text-blue-600" />
-                                      )}
-                                    </div>
-                                    <div>
-                                      <p className="text-sm font-medium">{file.name}</p>
-                                      <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}{file.isImage && " • Label"}</p>
-                                    </div>
-                                  </div>
-                                  <div className="flex items-center gap-3">
-                                    {file.status === "uploading" && (
-                                      <div className="flex items-center gap-2 text-blue-600">
-                                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
-                                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                        </svg>
-                                        <span className="text-xs">Uploading...</span>
-                                      </div>
-                                    )}
-                                    {file.status === "ready" && <span className="text-xs text-blue-600 font-medium">Ready</span>}
-                                    {file.status === "error" && <span className="text-xs text-destructive">{file.error}</span>}
-                                    <button onClick={() => removeFile(file.id)} className="p-1 text-muted-foreground hover:text-destructive transition-colors">
-                                      <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                                      </svg>
-                                    </button>
-                                  </div>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-
-                        {/* Optional notes */}
-                        {files.length > 0 && (
-                          <div>
-                            <label className="block text-sm font-medium mb-1">
-                              Additional Notes (Optional)
-                            </label>
-                            <textarea
-                              value={context.additionalNotes}
-                              onChange={(e) => setContext({ ...context, additionalNotes: e.target.value })}
-                              placeholder="Any specific concerns to check..."
-                              rows={2}
-                              className="w-full px-3 py-2 text-sm border rounded-lg bg-background placeholder-muted-foreground focus:ring-2 focus:ring-primary focus:border-primary resize-none"
-                            />
-                          </div>
-                        )}
-
-                        {/* Analyze button */}
-                        <div className="flex justify-end">
-                          <button
-                            onClick={handleAnalyze}
-                            disabled={!hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing}
-                            className={cn(
-                              "px-6 py-3 rounded-lg font-semibold transition-all",
-                              !hasReadyFiles || hasUploadingFiles || !hasImages || isAnalyzing
-                                ? "bg-muted text-muted-foreground cursor-not-allowed"
-                                : "bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
-                            )}
-                          >
-                            {isAnalyzing ? (
-                              <span className="flex items-center gap-2">
-                                <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                                </svg>
-                                Analyzing...
-                              </span>
-                            ) : (
-                              "Analyze Label"
-                            )}
-                          </button>
-                        </div>
-                      </CardContent>
-                      </Card>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+          {/* AI COMPLIANCE */}
+          {app.activeNav === "compliance" && (
+            <ComplianceSection
+              sortedReportThreads={compliance.sortedReportThreads}
+              activeReportThreadId={compliance.activeReportThreadId}
+              analysisJobs={compliance.analysisJobs}
+              activeReport={compliance.activeReport}
+              reportLoading={compliance.reportLoading}
+              reportError={compliance.reportError}
+              reportVectorStoreId={compliance.reportVectorStoreId}
+              reportChatTitle={compliance.reportChatTitle}
+              focusFindingId={compliance.focusFindingId}
+              files={compliance.files}
+              context={compliance.context}
+              fileInputRef={compliance.fileInputRef}
+              hasReadyFiles={compliance.hasReadyFiles}
+              hasUploadingFiles={compliance.hasUploadingFiles}
+              hasImages={compliance.hasImages}
+              isAnalyzing={compliance.isAnalyzing}
+              onSelectReportThread={(threadId) => {
+                compliance.handleSelectReportThread(threadId);
+                app.setActiveNav("compliance");
+              }}
+              onDeleteReportThread={compliance.handleDeleteReportThread}
+              onStartUpload={compliance.handleStartUpload}
+              onFileSelect={compliance.handleFileSelect}
+              onRemoveFile={compliance.removeFile}
+              onContextChange={compliance.setContext}
+              onAnalyze={() => {
+                void (async () => {
+                  const newThreadId = await compliance.handleAnalyze();
+                  if (newThreadId) {
+                    app.setActiveNav("compliance");
+                  }
+                })();
+              }}
+              onAskAboutFinding={compliance.handleAskAboutFinding}
+              onJumpToFinding={compliance.handleJumpToFinding}
+              onClearFocus={compliance.handleClearFocus}
+              onReportChatActivity={compliance.handleReportChatActivity}
+              onSetActiveNav={app.setActiveNav}
+            />
           )}
 
-          {/* ================================================================
-              TTB KNOWLEDGEBASE
-          ================================================================ */}
-          {activeNav === "knowledgebase" && (
+          {/* TTB KNOWLEDGEBASE */}
+          {app.activeNav === "knowledgebase" && (
             <div className="p-6 space-y-6">
               <div>
                 <h2 className="text-2xl font-bold text-foreground">TTB Knowledgebase</h2>
                 <div className="mt-2 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <FileIcon className="w-3.5 h-3.5" />
-                    {knowledgebaseStats.total} docs
+                    {compliance.knowledgebaseStats.total} docs
                   </span>
                   <span className="flex items-center gap-1">
                     <ClockIcon className="w-3.5 h-3.5" />
-                    Latest update {knowledgebaseStats.latest}
+                    Latest update {compliance.knowledgebaseStats.latest}
                   </span>
                 </div>
               </div>
 
-              {/* Filters */}
               <div className="flex items-center gap-4">
                 <div className="relative flex-1 max-w-sm">
                   <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
                     placeholder="Search documents..."
                     className="pl-9"
-                    value={docSearchQuery}
-                    onChange={(e) => setDocSearchQuery(e.target.value)}
+                    value={compliance.docSearchQuery}
+                    onChange={(e) => compliance.setDocSearchQuery(e.target.value)}
                   />
                 </div>
-                <Select value={docCategoryFilter} onValueChange={setDocCategoryFilter}>
+                <Select value={compliance.docCategoryFilter} onValueChange={compliance.setDocCategoryFilter}>
                   <SelectTrigger className="w-[150px]">
                     <SelectValue placeholder="Category" />
                   </SelectTrigger>
@@ -1919,19 +395,18 @@ export default function Home() {
                 </Select>
               </div>
 
-              {/* Documents Grid */}
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredDocs.map((doc) => (
+                {compliance.filteredDocs.map((doc) => (
                   <Card
                     key={doc.id}
                     className="hover:shadow-md transition-shadow cursor-pointer focus-visible:ring-2 focus-visible:ring-primary/40"
                     role="link"
                     tabIndex={0}
-                    onClick={() => handleOpenDocUrl(doc.url)}
+                    onClick={() => compliance.handleOpenDocUrl(doc.url)}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" || event.key === " ") {
                         event.preventDefault();
-                        handleOpenDocUrl(doc.url);
+                        compliance.handleOpenDocUrl(doc.url);
                       }
                     }}
                   >
@@ -1967,7 +442,7 @@ export default function Home() {
                           size="sm"
                           onClick={(event) => {
                             event.stopPropagation();
-                            handleOpenDocUrl(doc.url);
+                            compliance.handleOpenDocUrl(doc.url);
                           }}
                         >
                           Open online

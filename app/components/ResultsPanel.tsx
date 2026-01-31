@@ -113,8 +113,8 @@ export function ResultsPanel({ report, isLoading, error, onAskAboutFinding }: Re
 
   const limitations = [
     ...report.limitations.missing_inputs,
-    ...report.limitations.unverified,
-    ...report.limitations.scope_notes,
+    ...report.limitations.cant_read,
+    ...report.limitations.assumptions,
   ];
 
   const inputSections = [

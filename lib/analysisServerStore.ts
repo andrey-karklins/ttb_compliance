@@ -277,10 +277,10 @@ async function runAnalysisJob(job: AnalysisJob, params: StartAnalysisParams) {
       !Array.isArray(structuredFindings.limitations)
         ? {
             missing_inputs: structuredFindings.limitations.missing_inputs ?? [],
-            unverified: structuredFindings.limitations.unverified ?? [],
-            scope_notes: structuredFindings.limitations.scope_notes ?? [],
+            cant_read: structuredFindings.limitations.cant_read ?? [],
+            assumptions: structuredFindings.limitations.assumptions ?? [],
           }
-        : { missing_inputs: [], unverified: [], scope_notes: [] };
+        : { missing_inputs: [], cant_read: [], assumptions: [] };
 
     const report: ComplianceReport = {
       run_id: job.reportId,
